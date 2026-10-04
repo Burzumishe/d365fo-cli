@@ -24,6 +24,10 @@ public sealed class ValidateReferencesCommand : Command<ValidateReferencesComman
         [CommandOption("--context <NAME>")]
         [System.ComponentModel.Description("Owning class/table name, used in diagnostic messages.")]
         public string? Context { get; init; }
+
+        [CommandOption("--model <NAME>")]
+        [System.ComponentModel.Description("Model the code will be compiled in. Every type it names must live in a package that model references (Descriptor ModuleReferences). Default: the single model in D365FO_CUSTOM_MODELS; skipped when there are several.")]
+        public string? Model { get; init; }
     }
 
     public override int Execute(CommandContext ctx, Settings settings)
@@ -48,12 +52,16 @@ public sealed class ValidateReferencesCommand : Command<ValidateReferencesComman
         }
 
         var result = ReferenceResolver.Resolve(code!, repo);
+        var model = settings.Model ?? ModelVisibility.DefaultModel(D365FoSettings.FromEnvironment());
+        if (model is not null)
+            result = result with { Violations = [.. ModelVisibility.Check(result, repo, model), .. result.Violations] };
         var errors = result.Violations.Count(v => v.Severity == "error");
         var warnings = result.Violations.Count(v => v.Severity == "warning");
 
         var envelope = ToolResult<object>.Success(new
         {
             context = settings.Context,
+            model,
             verifiedCount = result.VerifiedCount,
             errors,
             warnings,

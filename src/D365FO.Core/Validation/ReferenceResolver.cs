@@ -10,7 +10,15 @@ namespace D365FO.Core.Validation;
 /// </summary>
 public sealed record ReferenceViolation(string Kind, string Severity, int Line, string Identifier, string Detail);
 
-public sealed record ResolveResult(IReadOnlyList<ReferenceViolation> Violations, int VerifiedCount);
+/// <param name="IndexedTypes">
+/// Every AOT type the code names that the index resolved (name → first line it appears on).
+/// Kernel and built-in types are not in it. Lets a caller check those types against the
+/// packages a target model can actually see — see <see cref="ModelVisibility"/>.
+/// </param>
+public sealed record ResolveResult(
+    IReadOnlyList<ReferenceViolation> Violations,
+    int VerifiedCount,
+    IReadOnlyDictionary<string, int>? IndexedTypes = null);
 
 /// <summary>Result of a method lookup: found + optional signature text.</summary>
 public sealed record MethodLookup(string? Signature);
@@ -408,6 +416,21 @@ public static class ReferenceResolver
                || locals.DeclaredNames.Contains(name)
                || LookupKinds(name).Count > 0;
 
+        var indexedTypes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        void TrackIndexed(string name, int line)
+        {
+            // No DeclaredNames check: callers pass names in TYPE position only, and X++ is
+            // case-insensitive, so `CustTable custTable;` would otherwise hide CustTable.
+            if (XppBuiltinTypes.Contains(name) || KernelTypes.Contains(name)) return;
+            if (LookupKinds(name).Count == 0) return;
+            if (line <= 0)
+            {
+                var first = Regex.Match(cleaned, $@"\b{Regex.Escape(name)}\b");
+                line = first.Success ? LineOf(cleaned, first.Index) : 0;
+            }
+            indexedTypes.TryAdd(name, line);
+        }
+
         // ── 1. Label references (from original string literals) ─────────────
         foreach (var s in strings)
         {
@@ -477,6 +500,7 @@ public static class ReferenceResolver
                         : $"\"{target}\" is not a known {string.Join("/", expected)} in the index. Use `d365fo search any {target}` to find the correct name."));
                 continue;
             }
+            TrackIndexed(target, line);
 
             // Second argument: fieldStr(T, F) / methodStr(C, m) / tableFieldGroupStr(T, G)
             if (member is not null)
@@ -537,6 +561,7 @@ public static class ReferenceResolver
                     $"\"{typeName}\" not found in the index. Use `d365fo search any {typeName}` to find the correct name."));
                 continue;
             }
+            TrackIndexed(typeName, line);
             if (kinds.Contains("enum", StringComparer.OrdinalIgnoreCase))
             {
                 // Enum value membership is verified separately when EnumValues are indexed;
@@ -589,6 +614,7 @@ public static class ReferenceResolver
             if (IsKnownType(typeName))
             {
                 verifiedCount++;
+                TrackIndexed(typeName, 0);
             }
             else
             {
@@ -648,7 +674,7 @@ public static class ReferenceResolver
             }
         }
 
-        return new ResolveResult(violations, verifiedCount);
+        return new ResolveResult(violations, verifiedCount, indexedTypes);
     }
 
     private static bool SafeMenuItemExists(IReferenceIndex index, string name)
