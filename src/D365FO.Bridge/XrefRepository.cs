@@ -122,6 +122,77 @@ namespace D365FO.Bridge
                         if (likeConds.Count > 0)
                             where += " OR " + string.Join(" OR ", likeConds);
 
+                        // Resolve the target Names once. The contains pattern ("%/name%") is a
+                        // full scan of Names (5M+ rows, ~6 s); joining it into each query below
+                        // repeated that scan per query and blew the client's timeout. Every
+                        // query then seeks References by its TargetId index instead.
+                        // Created by a parameterless command so it lives in the connection's
+                        // session: a parameterised command runs inside sp_executesql, and a temp
+                        // table created there is dropped when that call returns.
+                        using (var create = c.CreateCommand())
+                        {
+                            create.CommandText = "CREATE TABLE #targets (Id int PRIMARY KEY)";
+                            create.ExecuteNonQuery();
+                        }
+                        // RECOMPILE: planned for the parameter values, the contains scan runs in
+                        // parallel (~6 s); the generic cached plan ran it serially (~24 s).
+                        cmd.CommandText = "INSERT INTO #targets (Id) SELECT tgtName.Id FROM Names tgtName WHERE " + where +
+                                          " OPTION (RECOMPILE)";
+                        cmd.ExecuteNonQuery();
+
+                        // Filter by reference kind in SQL, BEFORE the TOP: filtering the
+                        // returned rows afterwards meant `--kind Set` searched only the first
+                        // N rows of every kind, and reported a fraction of the writers.
+                        int? kindId = null;
+                        var kindClause = string.Empty;
+                        if (!string.IsNullOrEmpty(kindFilter))
+                        {
+                            foreach (var kv in KindLabels)
+                                if (string.Equals(kv.Value, kindFilter, StringComparison.OrdinalIgnoreCase)) kindId = kv.Key;
+                            if (kindId.HasValue)
+                            {
+                                kindClause = " AND r.Kind = @kind";
+                                cmd.Parameters.Add(new SqlParameter("@kind", kindId.Value));
+                            }
+                        }
+
+                        // Exact totals for the whole match, so a capped list says it is capped.
+                        // Without them, the first `limit` rows (ordered by source path, i.e.
+                        // alphabetically) read as the complete answer. The join to Names
+                        // leaves out dangling rows whose source element no longer exists
+                        // (146 of CustParameters.PostingProfile's 241 on a real VM): the list
+                        // below cannot show them, so the totals must not count them.
+                        cmd.CommandText = @"
+SELECT r.Kind AS Kind, COUNT(*) AS Cnt
+FROM [References] r
+INNER JOIN Names srcName ON srcName.Id = r.SourceId
+WHERE r.TargetId IN (SELECT Id FROM #targets)" + kindClause + @"
+GROUP BY r.Kind";
+                        var byKind = new JsonObject();
+                        long total = 0;
+                        using (var r = cmd.ExecuteReader())
+                        {
+                            while (r.Read())
+                            {
+                                var k = Convert.ToInt32(r["Kind"]);
+                                var cnt = Convert.ToInt64(r["Cnt"]);
+                                total += cnt;
+                                byKind[KindLabels.TryGetValue(k, out var kl) ? kl : ("Kind" + k)] = cnt;
+                            }
+                        }
+                        cmd.CommandText = @"
+SELECT COUNT(DISTINCT r.SourceId)
+FROM [References] r
+INNER JOIN Names srcName ON srcName.Id = r.SourceId
+WHERE r.TargetId IN (SELECT Id FROM #targets)" + kindClause;
+                        var distinctSources = Convert.ToInt64(cmd.ExecuteScalar());
+                        result["total"] = total;
+                        result["distinctSources"] = distinctSources;
+                        result["byKind"] = byKind;
+                        if (!string.IsNullOrEmpty(kindFilter) && !kindId.HasValue)
+                            result["kindFilterIgnored"] = "'" + kindFilter + "' is not a reference kind (" +
+                                string.Join("|", KindLabels.Values) + "); returned every kind.";
+
                         var sql = @"
 SELECT TOP (@limit)
     srcName.Path  AS SourcePath,
@@ -131,10 +202,11 @@ SELECT TOP (@limit)
     r.[Column]    AS Col,
     m.Module      AS Module
 FROM [References] r
+INNER JOIN #targets t    ON t.Id = r.TargetId
 INNER JOIN Names srcName ON srcName.Id = r.SourceId
 INNER JOIN Names tgtName ON tgtName.Id = r.TargetId
 LEFT  JOIN Modules m     ON m.Id = srcName.ModuleId
-WHERE " + where + @"
+WHERE 1 = 1" + kindClause + @"
 ORDER BY srcName.Path";
                         cmd.CommandText = sql;
                         cmd.Parameters.Add(new SqlParameter("@limit", limit));
@@ -149,12 +221,6 @@ ORDER BY srcName.Path";
                                 var line = r["Line"] is short s ? (int)s : Convert.ToInt32(r["Line"]);
                                 var col = r["Col"] is short sc ? (int)sc : Convert.ToInt32(r["Col"]);
                                 var module = r["Module"] as string;
-
-                                if (!string.IsNullOrEmpty(kindFilter) &&
-                                    !string.Equals(KindLabels.TryGetValue(kind, out var kl) ? kl : null, kindFilter, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
 
                                 items.Add(new JsonObject
                                 {
@@ -185,6 +251,13 @@ ORDER BY srcName.Path";
             result["symbol"] = symbol;
             result["kindFilter"] = kindFilter ?? string.Empty;
             result["count"] = items.Count;
+            var totalNode = result["total"];
+            var totalRows = totalNode is null ? items.Count : (long)totalNode;
+            result["truncated"] = totalRows > items.Count;
+            if (totalRows > items.Count)
+                result["hint"] = "Showing " + items.Count + " of " + totalRows + " references. Narrow the target " +
+                                 "(Owner.member, e.g. CustParameters.PostingProfile), filter by reference kind " +
+                                 "(--kind Set|Read|Call|Type|...), or raise --limit.";
             result["source"] = "xrefdb";
             // When the target is scoped (member-qualified, or a label) the query
             // hit one exact leaf, so an empty list is an authoritative "no callers"
