@@ -14,8 +14,16 @@ public sealed class GetTableCommand : Command<GetTableCommand.Settings>
         public string Name { get; init; } = "";
 
         [CommandOption("--include <PARTS>")]
-        [System.ComponentModel.Description("Comma list: fields,indexes,relations (default: all)")]
+        [System.ComponentModel.Description("Comma list: fields,indexes,relations,methods,deleteactions,fieldgroups,mappings (default: all)")]
         public string? Include { get; init; }
+
+        [CommandOption("--with-source")]
+        [System.ComponentModel.Description("Return full X++ method bodies. Default: each method carries its declaration (signature) only — the bodies of a large table run to hundreds of KB.")]
+        public bool WithSource { get; init; }
+
+        [CommandOption("--full")]
+        [System.ComponentModel.Description("Bridge output only: keep every property, including those at their platform default and the data-classification tags. Default: compact.")]
+        public bool Full { get; init; }
 
         [CommandOption("--merged")]
         [System.ComponentModel.Description("Return the EFFECTIVE shape: the base table with every TableExtension folded in, each member labelled with the object that contributes it. This is what the AOS sees; the plain output is the base table alone.")]
@@ -37,11 +45,23 @@ public sealed class GetTableCommand : Command<GetTableCommand.Settings>
                 D365FO.Core.Analysis.ExtensionAnswers.TableMerge(RepoFactory.Create(), settings.Name));
         }
 
+        HashSet<string>? include;
+        try
+        {
+            include = TableParts.Parse(settings.Include);
+        }
+        catch (ArgumentException ex)
+        {
+            return RenderHelpers.Render(kind, ToolResult<object>.Fail("BAD_INPUT", ex.Message));
+        }
+
         if (BridgeGate.ShouldTry())
         {
             var bridged = BridgeGate.TryReadTable(settings.Name);
             if (bridged is not null)
             {
+                if (bridged is System.Text.Json.Nodes.JsonObject obj)
+                    TableParts.ShapeBridged(obj, include, settings.WithSource, compact: !settings.Full);
                 return RenderHelpers.Render(kind, ToolResult<object>.Success(bridged));
             }
         }
@@ -57,15 +77,13 @@ public sealed class GetTableCommand : Command<GetTableCommand.Settings>
                 ToolResult<object>.Fail("TABLE_NOT_FOUND", $"Table '{settings.Name}' not found in index.", hint));
         }
 
-        var result = ToolResult<object>.Success(new
-        {
-            table = details.Table,
-            fields = details.Fields,
-            relations = details.Relations,
-            methods = details.Methods,
-            indexes = details.Indexes,
-            deleteActions = details.DeleteActions,
-        });
+        var payload = new Dictionary<string, object?> { ["table"] = details.Table };
+        if (TableParts.Wants(include, "fields")) payload["fields"] = details.Fields;
+        if (TableParts.Wants(include, "relations")) payload["relations"] = details.Relations;
+        if (TableParts.Wants(include, "methods")) payload["methods"] = details.Methods;
+        if (TableParts.Wants(include, "indexes")) payload["indexes"] = details.Indexes;
+        if (TableParts.Wants(include, "deleteactions")) payload["deleteActions"] = details.DeleteActions;
+        var result = ToolResult<object>.Success(payload);
 
         return RenderHelpers.Render(kind, result, _ =>
         {
@@ -108,6 +126,166 @@ public sealed class GetTableCommand : Command<GetTableCommand.Settings>
             }
         });
     }
+}
+
+/// <summary>
+/// Shapes a `get table` payload. The bridge hands back the full AxTable — every field
+/// property, every method body — which for CustTable is ~530 KB: more than a whole agent
+/// session's budget for one lookup. `--include` picks the collections, method bodies are
+/// reduced to their declarations unless `--with-source`, and empty properties are dropped.
+/// </summary>
+internal static class TableParts
+{
+    // Lower-case part name → the bridge's collection key.
+    private static readonly Dictionary<string, string> BridgeKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fields"] = "Fields",
+        ["indexes"] = "Indexes",
+        ["relations"] = "Relations",
+        ["methods"] = "Methods",
+        ["deleteactions"] = "DeleteActions",
+        ["fieldgroups"] = "FieldGroups",
+        ["mappings"] = "Mappings",
+    };
+
+    public static HashSet<string>? Parse(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return null;
+        var parts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!BridgeKeys.ContainsKey(raw))
+                throw new ArgumentException($"Unknown --include part '{raw}'. Valid: {string.Join(",", BridgeKeys.Keys)}.");
+            parts.Add(raw);
+        }
+        return parts;
+    }
+
+    public static bool Wants(HashSet<string>? include, string part) => include is null || include.Contains(part);
+
+    // Property values the platform applies when a member does not set them. Seen on every
+    // one of CustTable's 193 fields / 75 relations, so they carry no information per member.
+    private static readonly Dictionary<string, string> Defaults = new(StringComparer.Ordinal)
+    {
+        ["IgnoreEDTRelation"] = "No", ["Null"] = "No", ["AosAuthorization"] = "No",
+        ["MinReadAccess"] = "Auto", ["IsObsolete"] = "No", ["IsSystemGenerated"] = "No",
+        ["SysSharingType"] = "Always", ["SaveContents"] = "Yes", ["IsManuallyUpdated"] = "No",
+        ["IsNullable"] = "False", ["Mandatory"] = "No", ["Visible"] = "Yes",
+        ["AllowEditOnCreate"] = "Yes", ["AllowEdit"] = "Yes", ["Adjustment"] = "Left",
+        ["FieldUpdate"] = "Absolute", ["CurrencyDate"] = "Auto", ["CurrencyCode"] = "Auto",
+        ["Validate"] = "Yes", ["UseDefaultRoleNames"] = "Yes", ["CreateNavigationPropertyMethods"] = "No",
+        ["EDTRelation"] = "No", ["OnDelete"] = "None",
+        // The metadata class's own default, not the field's length: AccountNum reports 10
+        // while its EDT CustAccount is 20. The real size comes from the EDT.
+        ["StringSize"] = "10",
+    };
+
+    // Data-classification tags: needed for GDPR reviews, not for writing code.
+    private static readonly string[] ClassificationKeys = ["GeneralDataProtectionRegulation", "AssetClassification"];
+
+    // What a method's declaration already says, once it is in Signature.
+    private static readonly string[] MethodKeysInSignature =
+        ["Visibility", "IsAbstract", "IsDelegate", "IsStatic", "IsFinal", "IsDisplay", "IsEdit", "ReturnType", "Parameters"];
+
+    public static void ShapeBridged(System.Text.Json.Nodes.JsonObject table, HashSet<string>? include, bool withSource, bool compact)
+    {
+        foreach (var (part, key) in BridgeKeys)
+        {
+            if (!Wants(include, part)) table.Remove(key);
+        }
+
+        if (table["Methods"] is System.Text.Json.Nodes.JsonArray methods)
+        {
+            foreach (var m in methods.OfType<System.Text.Json.Nodes.JsonObject>())
+            {
+                if (m["Source"] is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var src))
+                {
+                    m["Signature"] = Declaration(src);
+                    if (!withSource) m.Remove("Source");
+                }
+                if (compact)
+                {
+                    foreach (var k in MethodKeysInSignature) m.Remove(k);
+                }
+            }
+        }
+
+        if (compact)
+        {
+            foreach (var key in new[] { "Fields", "Relations", "FieldGroups", "Indexes", "DeleteActions" })
+            {
+                if (table[key] is System.Text.Json.Nodes.JsonArray arr)
+                    foreach (var member in arr.OfType<System.Text.Json.Nodes.JsonObject>()) DropDefaults(member);
+            }
+        }
+
+        DropEmpty(table);
+    }
+
+    private static void DropDefaults(System.Text.Json.Nodes.JsonObject member)
+    {
+        foreach (var k in ClassificationKeys) member.Remove(k);
+        foreach (var key in member.Select(p => p.Key).ToList())
+        {
+            var value = member[key];
+            if (value is System.Text.Json.Nodes.JsonValue v)
+            {
+                var text = v.TryGetValue<string>(out var s) ? s
+                         : v.TryGetValue<bool>(out var b) ? (b ? "True" : "False")
+                         : null;
+                if (text is not null && Defaults.TryGetValue(key, out var def) && def == text)
+                    member.Remove(key);
+            }
+            else if (value is System.Text.Json.Nodes.JsonArray children)
+            {
+                // Relation constraints repeat the field as their name; nested members share the defaults.
+                foreach (var child in children.OfType<System.Text.Json.Nodes.JsonObject>())
+                {
+                    if ((string?)child["Name"] is { } n && n == (string?)child["Field"]) child.Remove("Name");
+                    DropDefaults(child);
+                }
+            }
+        }
+    }
+
+    /// <summary>The text before the method body's opening brace, whitespace collapsed.</summary>
+    internal static string Declaration(string source)
+    {
+        var brace = source.IndexOf('{');
+        var head = brace >= 0 ? source[..brace] : source;
+        // Drop leading XML doc comments and attributes' line breaks; keep attributes themselves.
+        var lines = head.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0 && !l.StartsWith("///") && !l.StartsWith("//"));
+        return System.Text.RegularExpressions.Regex.Replace(string.Join(" ", lines), @"\s+", " ").Trim();
+    }
+
+    private static void DropEmpty(System.Text.Json.Nodes.JsonNode? node)
+    {
+        switch (node)
+        {
+            case System.Text.Json.Nodes.JsonObject o:
+                foreach (var key in o.Select(p => p.Key).ToList())
+                {
+                    var child = o[key];
+                    DropEmpty(child);
+                    if (IsEmpty(child)) o.Remove(key);
+                }
+                break;
+            case System.Text.Json.Nodes.JsonArray a:
+                foreach (var child in a) DropEmpty(child);
+                break;
+        }
+    }
+
+    private static bool IsEmpty(System.Text.Json.Nodes.JsonNode? n) => n switch
+    {
+        null => true,
+        System.Text.Json.Nodes.JsonValue v => v.TryGetValue<string>(out var s) && s.Length == 0,
+        System.Text.Json.Nodes.JsonArray a => a.Count == 0,
+        System.Text.Json.Nodes.JsonObject o => o.Count == 0,
+        _ => false,
+    };
 }
 
 public sealed class GetEdtCommand : Command<GetEdtCommand.Settings>
