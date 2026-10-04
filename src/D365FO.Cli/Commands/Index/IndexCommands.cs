@@ -143,6 +143,10 @@ public sealed class IndexExtractCommand : Command<IndexExtractCommand.Settings>
         [CommandOption("--index-source")]
         [System.ComponentModel.Description("Also full-text index X++ method bodies into MethodSourceFts (opt-in; enlarges the DB). Speeds up `find refs` and enables source search.")]
         public bool IndexSource { get; init; }
+
+        [CommandOption("--force")]
+        [System.ComponentModel.Description("Re-extract every model even when its files are unchanged (ignores the stored fingerprint and --since). Needed after an upgrade that extracts more from the same files.")]
+        public bool Force { get; init; }
     }
 
     public override int Execute(CommandContext ctx, Settings settings)
@@ -157,7 +161,8 @@ public sealed class IndexExtractCommand : Command<IndexExtractCommand.Settings>
             settings.Since,
             extraPackagesPaths: extraPaths,
             parallelism: settings.Parallelism,
-            indexSource: settings.IndexSource);
+            indexSource: settings.IndexSource,
+            force: settings.Force);
     }
 
     internal static int ExtractCore(
@@ -169,7 +174,8 @@ public sealed class IndexExtractCommand : Command<IndexExtractCommand.Settings>
         IReadOnlyDictionary<string, string?>? fingerprintsByModel = null,
         int? parallelism = null,
         IReadOnlyList<string>? extraPackagesPaths = null,
-        bool indexSource = false)
+        bool indexSource = false,
+        bool force = false)
     {
         var cfg = D365FoSettings.FromEnvironment(databaseOverride);
         var root = packagesOverride ?? cfg.PackagesPath;
@@ -281,12 +287,12 @@ public sealed class IndexExtractCommand : Command<IndexExtractCommand.Settings>
                         {
                             var model = Path.GetFileName(modelDir)!;
                             var fp = ComputeFingerprint(modelDir, cfg.LabelLanguages);
-                            if (since.HasValue && NewestMtime(modelDir) is { } newest && newest < since.Value)
+                            if (!force && since.HasValue && NewestMtime(modelDir) is { } newest && newest < since.Value)
                             {
                                 System.Threading.Interlocked.Increment(ref skippedCount);
                                 return;
                             }
-                            if (dbFingerprints.TryGetValue(model, out var stored)
+                            if (!force && dbFingerprints.TryGetValue(model, out var stored)
                                 && !string.IsNullOrEmpty(stored)
                                 && string.Equals(stored, fp, StringComparison.Ordinal))
                             {
