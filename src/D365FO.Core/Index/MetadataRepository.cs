@@ -747,6 +747,27 @@ public sealed partial class MetadataRepository
             WHERE ObjectName = @n AND ObjectType = @t
             ORDER BY Role, Duty, Privilege",
             new { n = objectName, t = objectType }).ToList();
+
+        // Privileges grant MENU ITEMS, not forms/classes/reports, so asking for a form directly
+        // finds nothing. Follow every menu item that opens the object; its name is the route's
+        // EntryPoint. A menu item omits <ObjectType> when it is its kind's default (Display →
+        // Form, Action → Class, Output → SSRSReport), so the blank must count as that default.
+        if (!objectType.StartsWith("MenuItem", StringComparison.OrdinalIgnoreCase))
+        {
+            var target = objectType.Equals("Report", StringComparison.OrdinalIgnoreCase) ? "SSRSReport" : objectType;
+            var viaMenuItems = conn.Query<SecurityRoute>(@"
+                SELECT DISTINCT sm.Role, sm.Duty, sm.Privilege, sm.EntryPoint
+                FROM MenuItems mi
+                JOIN SecurityMap sm ON sm.ObjectName = mi.Name AND sm.ObjectType = 'MenuItem' || mi.Kind
+                WHERE mi.Object = @n COLLATE NOCASE
+                  AND COALESCE(NULLIF(mi.ObjectType, ''),
+                               CASE mi.Kind WHEN 'Display' THEN 'Form' WHEN 'Action' THEN 'Class'
+                                            WHEN 'Output' THEN 'SSRSReport' END) = @t COLLATE NOCASE
+                ORDER BY sm.EntryPoint, sm.Role, sm.Duty, sm.Privilege",
+                new { n = objectName, t = target });
+            routes = routes.Concat(viaMenuItems).Distinct().ToList();
+        }
+
         return new SecurityCoverage(objectName, objectType, routes,
             ReadRowLevelSecurity(conn, objectName, objectType));
     }

@@ -204,7 +204,10 @@ public static class BridgeGate
         if (!BridgeClient.IsAvailable()) return null;
         try
         {
-            var options = DefaultOptions();
+            // A where-used on a widely used symbol resolves thousands of target names and
+            // counts tens of thousands of rows (~7 s for CustParameters). At the default 10 s
+            // a cold bridge timed out and the caller silently got the regex scan instead.
+            var options = DefaultOptions() with { RequestTimeout = TimeSpan.FromSeconds(60) };
             using var client = new BridgeClient(options);
             var args = new JsonObject { ["symbol"] = symbol, ["limit"] = limit };
             if (!string.IsNullOrEmpty(kind)) args["kind"] = kind;

@@ -2080,7 +2080,12 @@ public sealed partial class ToolHandlers
         var resolvedGoal = goal ?? "(not stated)";
 
         var kinds = _repo.SymbolKinds(objectName);
-        var objectType = type?.Trim().ToLowerInvariant() ?? kinds.FirstOrDefault();
+        var objectType = type?.Trim().ToLowerInvariant() ?? PreferredKind(kinds);
+        // SalesTable, CustTable, … are both a table and a form. Say which one was picked so
+        // the caller can re-ask with --type instead of reading form strategies for a table.
+        var otherKinds = type is null
+            ? kinds.Where(k => k != objectType && !k.EndsWith("-extension", StringComparison.Ordinal)).ToList()
+            : [];
         if (kinds.Count == 0 && type is null)
             return ToolResult<object>.Fail("OBJECT_NOT_FOUND",
                 $"\"{objectName}\" not found in the index.",
@@ -2180,6 +2185,9 @@ public sealed partial class ToolHandlers
             goal = resolvedGoal,
             objectName,
             objectType,
+            ambiguity = otherKinds.Count > 0
+                ? $"\"{objectName}\" is also a {string.Join(", ", otherKinds)}; resolved as {objectType}. Pass --type (type=...) to choose another."
+                : null,
             method = methodInfo,
             existingCocExtensions = coc,
             recommendedStrategies = StrategiesFor(objectType),
@@ -2192,6 +2200,19 @@ public sealed partial class ToolHandlers
                 : "Pass the grounding token to generate to confirm this context was used. " +
                   "Set D365FO_GROUNDING_ENFORCE=true to require it.",
         });
+    }
+
+    // Order for a name several kinds share. SymbolKinds comes back from a SQL UNION, i.e.
+    // alphabetically, which put "form" ahead of "table" for every Table/Form pair. A CoC or
+    // field change on such a name almost always means the table (or the class).
+    private static readonly string[] KindPriority =
+        ["table", "class", "form", "view", "data-entity", "query", "map", "enum", "edt", "menu-item"];
+
+    private static string? PreferredKind(IReadOnlyList<string> kinds)
+    {
+        foreach (var k in KindPriority)
+            if (kinds.Contains(k)) return k;
+        return kinds.FirstOrDefault();
     }
 
     /// <summary>

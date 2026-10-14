@@ -250,10 +250,19 @@ public sealed class MetadataExtractor
         var subscribers = classes.SelectMany(DetectSubscribers).ToList();
         businessEvents = DeriveBusinessEvents(classes);
 
+        // The package's Descriptor/<Model>.xml carries publisher, layer and ModuleReferences.
+        // Read here rather than by each caller: `index extract` and the incremental sync both
+        // called ExtractModel directly and never applied it, so every model was indexed with
+        // no dependencies at all (`models deps` and `models coupling` were empty).
+        var packageDir = Path.GetDirectoryName(Path.GetFullPath(modelRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var descriptor = packageDir is not null && LoadPackageDescriptors(packageDir).TryGetValue(modelName, out var d)
+            ? d
+            : (Publisher: (string?)null, Layer: (string?)null, Dependencies: (IReadOnlyList<string>)Array.Empty<string>());
+
         return new ExtractBatch(
             Model: modelName,
-            Publisher: null,
-            Layer: null,
+            Publisher: descriptor.Publisher,
+            Layer: descriptor.Layer,
             IsCustom: isCustom,
             Tables: tables,
             Classes: classes,
@@ -283,6 +292,7 @@ public sealed class MetadataExtractor
             ConfigurationKeys = configKeys,
             Tiles            = tiles,
             Workspaces       = workspaces,
+            Dependencies     = descriptor.Dependencies,
         };
     }
 
