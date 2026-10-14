@@ -2794,6 +2794,11 @@ public sealed partial class ToolHandlers
         if (string.IsNullOrWhiteSpace(name))
             return ToolResult<object>.Fail("BAD_INPUT", "name is required.");
 
+        // A label is used in metadata properties (Caption, Label, HelpText), which the
+        // method-body search never reads.
+        if (LabelReferenceSearch.IsLabelToken(name))
+            return FindLabelReferences(name, kind, model, limit);
+
         var result = MethodSourceSearch.Find(_repo, name, kind, model, limit);
         var items = result.Hits.Select(h => new
         {
@@ -2811,6 +2816,33 @@ public sealed partial class ToolHandlers
             via = result.Via,
             filesScanned = result.FilesScanned,
             searched = result.Searched,
+            count = items.Count,
+            truncated = result.Truncated,
+            items,
+        }, result.Caveat is null ? null : [result.Caveat]);
+    }
+
+    /// <summary>Where-used for a label token, shared by <c>find refs</c> and <c>labels search --where-used</c>.</summary>
+    public ToolResult<object> FindLabelReferences(string token, string? kind, string? model, int limit = 200)
+    {
+        var result = LabelReferenceSearch.Find(_repo, token, kind, model, limit);
+        var items = result.Hits.Select(h => new
+        {
+            kind = h.Kind,
+            name = h.Name,
+            model = h.Model,
+            matches = h.Matches.Select(l => new { line = l.Line, text = l.Text }),
+            path = h.Path,
+        }).ToList();
+
+        return ToolResult<object>.Success(new
+        {
+            needle = result.Needle,
+            via = "label-scan",
+            labelFile = result.LabelFile,
+            ownerModel = result.OwnerModel,
+            modelsScanned = result.ModelsScanned,
+            filesScanned = result.FilesScanned,
             count = items.Count,
             truncated = result.Truncated,
             items,

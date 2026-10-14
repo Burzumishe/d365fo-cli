@@ -179,15 +179,15 @@ public sealed class FindRefsCommand : Command<FindRefsCommand.Settings>
     public sealed class Settings : D365OutputSettings
     {
         [CommandArgument(0, "<NAME>")]
-        [System.ComponentModel.Description("Symbol to search for (class / table / EDT / enum / label). With --xref, qualify a method/field as \"Owner.member\" (e.g. SalesTable.initFromSalesQuotationTable) or pass an AOT path to scope the where-used to its declaring type; a bare member name matches that name on every type. A label reference (\"@WAX2194\" or \"@LabelFile:LabelId\") returns that label's where-used.")]
+        [System.ComponentModel.Description("Symbol to search for (class / table / EDT / enum / label). With --xref, qualify a method/field as \"Owner.member\" (e.g. SalesTable.initFromSalesQuotationTable) or pass an AOT path to scope the where-used to its declaring type; a bare member name matches that name on every type. A label reference (\"@WAX2194\" or \"@LabelFile:LabelId\") returns that label's where-used: every AOT object (form caption, menu item, field label, X++ source) in the model that ships the label file and the custom models that depend on it.")]
         public string Name { get; init; } = "";
 
         [CommandOption("--kind <KIND>")]
-        [System.ComponentModel.Description("Restrict scan to a single artifact kind: class | table | form.")]
+        [System.ComponentModel.Description("Restrict scan to a single artifact kind: class | table | form. For a label, any AOT folder prefix (form, menuitem, table, edt, ...).")]
         public string? Kind { get; init; }
 
         [CommandOption("--model <NAME>")]
-        [System.ComponentModel.Description("Restrict scan to a single model.")]
+        [System.ComponentModel.Description("Restrict scan to a single model. For a label shipped by a standard model, this is how to scan that standard model (only custom models are scanned by default).")]
         public string? Model { get; init; }
 
         [CommandOption("-l|--limit <N>")]
@@ -353,30 +353,9 @@ public sealed class FindRelatedCommand : Command<FindRelatedCommand.Settings>
         return RenderHelpers.Render(output, ToolResult<object>.Success(new { count = items.Count, items }));
     }
 
+    // Shared with `find refs` and the MCP find_references tool, so a label token is routed the same way.
     private static int RenderRefs(OutputMode.Kind output, D365FO.Core.Index.MetadataRepository repo, string name, string? kind, int limit)
-    {
-        // Shared with the MCP find_references tool. Uses the MethodSourceFts index
-        // when it's populated (index extract --index-source), else scans on disk.
-        var result = D365FO.Core.Index.MethodSourceSearch.Find(repo, name, kind, model: null, limit: limit);
-        var items = result.Hits.Select(h => new
-        {
-            kind = h.Kind,
-            name = h.Name,
-            model = h.Model,
-            method = h.Method,
-            path = h.Path,
-            matches = h.Matches.Select(l => new { line = l.Line, text = l.Text }),
-        });
-        return RenderHelpers.Render(output, ToolResult<object>.Success(new
-        {
-            needle = result.Needle,
-            via = result.Via,
-            filesScanned = result.FilesScanned,
-            count = result.Hits.Count,
-            truncated = result.Truncated,
-            items,
-        }));
-    }
+        => RenderHelpers.Render(output, new D365FO.Mcp.ToolHandlers(repo).FindReferences(name, kind, model: null, limit: limit));
 
     private static int RenderItems<T>(OutputMode.Kind output, IReadOnlyList<T> items)
         => RenderHelpers.Render(output, ToolResult<object>.Success(new { count = items.Count, items }));

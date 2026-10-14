@@ -56,7 +56,15 @@ public sealed class SearchLabelCommand : Command<SearchLabelCommand.Settings>
         [CommandOption("--fts")]
         [System.ComponentModel.Description("Use SQLite FTS5 ranking (phrase queries, NEAR, column filters). Falls back to LIKE if FTS5 is unavailable.")]
         public bool Fts { get; init; }
+
+        [CommandOption("--where-used")]
+        [System.ComponentModel.Description("Also list the objects that use each matching label (form caption, menu item, field label, X++ source) — finds a form from the text users see. Covers the first 10 distinct labels.")]
+        public bool WhereUsed { get; init; }
     }
+
+    // Each label is a scan of its model's folders; a broad query must not turn into dozens of them.
+    private const int MaxWhereUsedLabels = 10;
+    private const int MaxUsagesPerLabel = 25;
 
     public override int Execute(CommandContext context, Settings settings)
     {
@@ -82,11 +90,14 @@ public sealed class SearchLabelCommand : Command<SearchLabelCommand.Settings>
         // labels) only to fail BP later with BPErrorUnknownLabel.
         var (phantoms, warnings) = D365FO.Core.Index.LabelDiskCheck.Annotate(repo, matches);
 
+        var whereUsed = settings.WhereUsed ? WhereUsed(repo, matches) : null;
+
         var result = ToolResult<object>.Success(new
         {
             count = matches.Count,
             items = matches,
             phantomLabels = phantoms.Count > 0 ? phantoms : null,
+            whereUsed,
         }, warnings);
 
         return RenderHelpers.Render(kind, result, _ =>
@@ -100,7 +111,38 @@ public sealed class SearchLabelCommand : Command<SearchLabelCommand.Settings>
                 table.AddRow(m.File, m.Language, key, RenderHelpers.Escape(m.Value) ?? "-");
             }
             AnsiConsole.Write(table);
+            foreach (var w in whereUsed ?? [])
+            {
+                AnsiConsole.MarkupLine($"[bold]{RenderHelpers.Escape(w.Label)}[/] used by {w.Usages.Count} object(s)");
+                foreach (var u in w.Usages)
+                    AnsiConsole.MarkupLine($"  {RenderHelpers.Escape(u.Kind)} {RenderHelpers.Escape(u.Name)} [grey]({RenderHelpers.Escape(u.Model)})[/]");
+            }
         });
+    }
+
+    private sealed record LabelUsage(string Kind, string Name, string Model);
+
+    private sealed record LabelWhereUsed(string Label, IReadOnlyList<LabelUsage> Usages, bool Truncated, string? Caveat);
+
+    /// <summary>The objects using each distinct label among the hits (the same key in several languages is one label).</summary>
+    private static IReadOnlyList<LabelWhereUsed> WhereUsed(
+        D365FO.Core.Index.MetadataRepository repo, IReadOnlyList<D365FO.Core.Index.LabelMatch> matches)
+    {
+        var tokens = matches
+            .Select(m => m.Key.StartsWith('@') ? m.Key : $"@{m.File}:{m.Key}")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxWhereUsedLabels);
+        var result = new List<LabelWhereUsed>();
+        foreach (var token in tokens)
+        {
+            var refs = D365FO.Core.Index.LabelReferenceSearch.Find(repo, token, kind: null, model: null, limit: MaxUsagesPerLabel, sampleLinesPerHit: 0);
+            result.Add(new LabelWhereUsed(
+                token,
+                refs.Hits.Select(h => new LabelUsage(h.Kind, h.Name, h.Model)).ToList(),
+                refs.Truncated,
+                refs.Caveat));
+        }
+        return result;
     }
 }
 

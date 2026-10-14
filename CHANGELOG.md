@@ -19,6 +19,23 @@ was ported from.
 
 ## [Unreleased]
 
+### Fixed — label where-used (`find refs @File:Key`)
+
+- **`find refs` on a label token** (`@TallinnaKaubamaja:PODistribution`, `@SYS12345`) now reads
+  the whole XML of every AOT object, so it finds the form `Caption`, menu item / field `Label` and
+  `HelpText` that use the label, not only X++ method bodies. Before, the method-body scan could
+  never match a label (`\b` does not match before `@`) and, with no `--model`, read every package
+  in PackagesLocalDirectory — over two minutes for an empty result. The scan is now limited to the
+  model that ships the label file and the custom models that depend on it (about 2 s on a
+  3,000-object model); a label shipped by a standard model scans the custom models and says so.
+  `--kind` takes any AOT folder prefix (`form`, `menuitem`, …) for labels. The MCP
+  `find_references` tool and `find related refs` take the same path.
+
+### Added — `labels search --where-used`
+
+- **`labels search <text> --where-used`** lists the objects that use each matching label (first
+  10 labels), so a form can be found from the caption users see in one call.
+
 ### Added — suffix-only naming (`D365FO_EXTENSION_SUFFIX`)
 
 - **`D365FO_EXTENSION_SUFFIX`** (e.g. `_TKM`) gives the generators the suffix convention of the

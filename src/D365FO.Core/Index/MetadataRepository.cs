@@ -2288,6 +2288,34 @@ public sealed partial class MetadataRepository
             .ToList();
     }
 
+    /// <summary>
+    /// Folder of each model on disk (<c>&lt;Package&gt;/&lt;Model&gt;</c>, the parent of its
+    /// <c>Ax*</c> folders), keyed by model name. The index stores no model path, so it is read
+    /// back from one indexed object or label file per model; a model with neither is absent.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> GetModelRootDirectories()
+    {
+        using var conn = OpenReadOnly();
+        var rows = conn.Query<(string Model, string SourcePath)>(@"
+            SELECT m.Name, MIN(c.SourcePath) FROM Classes c JOIN Models m ON m.ModelId=c.ModelId
+             WHERE c.SourcePath IS NOT NULL AND c.SourcePath <> '' GROUP BY m.Name
+            UNION ALL
+            SELECT m.Name, MIN(t.SourcePath) FROM Tables t JOIN Models m ON m.ModelId=t.ModelId
+             WHERE t.SourcePath IS NOT NULL AND t.SourcePath <> '' GROUP BY m.Name
+            UNION ALL
+            SELECT m.Name, MIN(f.SourcePath) FROM Forms f JOIN Models m ON m.ModelId=f.ModelId
+             WHERE f.SourcePath IS NOT NULL AND f.SourcePath <> '' GROUP BY m.Name");
+        var roots = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (model, sourcePath) in rows)
+        {
+            if (roots.ContainsKey(model)) continue;
+            // <root>/<Package>/<Model>/AxClass/Name.xml -> <root>/<Package>/<Model>
+            var root = Path.GetDirectoryName(Path.GetDirectoryName(sourcePath));
+            if (!string.IsNullOrEmpty(root)) roots[model] = root;
+        }
+        return roots;
+    }
+
     private sealed class SourcePathRow
     {
         public string Kind { get; set; } = "";
