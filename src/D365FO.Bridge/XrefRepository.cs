@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Data.SqlClient;
 using System.Text.Json.Nodes;
 
@@ -69,9 +70,14 @@ namespace D365FO.Bridge
             }
         }
 
-        internal static JsonObject Find(string symbol, string kindFilter, int limit)
+        /// <summary>
+        /// Where-used over one or more symbols in one query: a table, its form and its menu item
+        /// often share a name, and the caller asks for all of them at once.
+        /// </summary>
+        internal static JsonObject Find(IList<string> symbols, string kindFilter, int limit)
         {
-            if (string.IsNullOrWhiteSpace(symbol))
+            symbols = (symbols ?? new List<string>()).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+            if (symbols.Count == 0)
             {
                 return new JsonObject
                 {
@@ -81,9 +87,19 @@ namespace D365FO.Bridge
                 };
             }
             if (limit <= 0 || limit > 1000) limit = 200;
+            var symbol = string.Join(", ", symbols);
 
             // Resolve the input into one or more candidate XREFDB target paths.
-            var (exactPaths, likePaths, scopedTarget) = ResolveTargetPaths(symbol);
+            var exactPaths = new List<string>();
+            var likePaths = new List<string>();
+            var scopedTarget = true;
+            foreach (var s in symbols)
+            {
+                var resolved = ResolveTargetPaths(s);
+                exactPaths.AddRange(resolved.exactPaths.Where(p => !exactPaths.Contains(p)));
+                likePaths.AddRange(resolved.likePaths.Where(p => !likePaths.Contains(p)));
+                scopedTarget &= resolved.scopedTarget;
+            }
 
             var result = new JsonObject();
             var items = new JsonArray();
@@ -156,18 +172,32 @@ namespace D365FO.Bridge
                             }
                         }
 
+                        // Read the matching References rows once. References is a heap with a
+                        // TargetId index that does not cover Kind/Line/Column, so every pass over
+                        // it is a row lookup per reference (~2.3 s for SalesTable's 46,000 rows);
+                        // the totals and the list below used to make three such passes.
+                        // The join to Names leaves out dangling rows whose source element no
+                        // longer exists (146 of CustParameters.PostingProfile's 241 on a real VM):
+                        // the list cannot show them, so the totals must not count them.
+                        using (var create = c.CreateCommand())
+                        {
+                            create.CommandText = "CREATE TABLE #refs (SourceId int, TargetId int, Kind int, Line int, Col int)";
+                            create.ExecuteNonQuery();
+                        }
+                        cmd.CommandText = @"
+INSERT INTO #refs (SourceId, TargetId, Kind, Line, Col)
+SELECT r.SourceId, r.TargetId, r.Kind, r.Line, r.[Column]
+FROM [References] r
+INNER JOIN #targets t    ON t.Id = r.TargetId
+INNER JOIN Names srcName ON srcName.Id = r.SourceId
+WHERE 1 = 1" + kindClause + @"
+OPTION (RECOMPILE)";
+                        cmd.ExecuteNonQuery();
+
                         // Exact totals for the whole match, so a capped list says it is capped.
                         // Without them, the first `limit` rows (ordered by source path, i.e.
-                        // alphabetically) read as the complete answer. The join to Names
-                        // leaves out dangling rows whose source element no longer exists
-                        // (146 of CustParameters.PostingProfile's 241 on a real VM): the list
-                        // below cannot show them, so the totals must not count them.
-                        cmd.CommandText = @"
-SELECT r.Kind AS Kind, COUNT(*) AS Cnt
-FROM [References] r
-INNER JOIN Names srcName ON srcName.Id = r.SourceId
-WHERE r.TargetId IN (SELECT Id FROM #targets)" + kindClause + @"
-GROUP BY r.Kind";
+                        // alphabetically) read as the complete answer.
+                        cmd.CommandText = "SELECT Kind, COUNT(*) AS Cnt FROM #refs GROUP BY Kind";
                         var byKind = new JsonObject();
                         long total = 0;
                         using (var r = cmd.ExecuteReader())
@@ -180,11 +210,7 @@ GROUP BY r.Kind";
                                 byKind[KindLabels.TryGetValue(k, out var kl) ? kl : ("Kind" + k)] = cnt;
                             }
                         }
-                        cmd.CommandText = @"
-SELECT COUNT(DISTINCT r.SourceId)
-FROM [References] r
-INNER JOIN Names srcName ON srcName.Id = r.SourceId
-WHERE r.TargetId IN (SELECT Id FROM #targets)" + kindClause;
+                        cmd.CommandText = "SELECT COUNT(DISTINCT SourceId) FROM #refs";
                         var distinctSources = Convert.ToInt64(cmd.ExecuteScalar());
                         result["total"] = total;
                         result["distinctSources"] = distinctSources;
@@ -199,14 +225,12 @@ SELECT TOP (@limit)
     tgtName.Path  AS TargetPath,
     r.Kind        AS Kind,
     r.Line        AS Line,
-    r.[Column]    AS Col,
+    r.Col         AS Col,
     m.Module      AS Module
-FROM [References] r
-INNER JOIN #targets t    ON t.Id = r.TargetId
+FROM #refs r
 INNER JOIN Names srcName ON srcName.Id = r.SourceId
 INNER JOIN Names tgtName ON tgtName.Id = r.TargetId
 LEFT  JOIN Modules m     ON m.Id = srcName.ModuleId
-WHERE 1 = 1" + kindClause + @"
 ORDER BY srcName.Path";
                         cmd.CommandText = sql;
                         cmd.Parameters.Add(new SqlParameter("@limit", limit));

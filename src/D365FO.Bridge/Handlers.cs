@@ -3,6 +3,7 @@
 // </copyright>
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -189,7 +190,13 @@ namespace D365FO.Bridge
             string kind   = args != null ? (string)args["kind"]   : null;
             int    limit  = 200;
             if (args != null && args["limit"] is JsonNode ln && ln.GetValue<object>() is object lv && int.TryParse(lv.ToString(), out var li)) limit = li;
-            return XrefRepository.Find(symbol, kind, limit);
+            // "symbols" asks for several targets in one query (a table, its form and its menu item).
+            var symbols = new List<string>();
+            if (args != null && args["symbols"] is JsonArray many)
+                foreach (var s in many) symbols.Add((string)s);
+            else
+                symbols.Add(symbol);
+            return XrefRepository.Find(symbols, kind, limit);
         }
 
         // --- model manifest -------------------------------------------------

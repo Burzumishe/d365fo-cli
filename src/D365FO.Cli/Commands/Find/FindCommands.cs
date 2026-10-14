@@ -179,7 +179,7 @@ public sealed class FindRefsCommand : Command<FindRefsCommand.Settings>
     public sealed class Settings : D365OutputSettings
     {
         [CommandArgument(0, "<NAME>")]
-        [System.ComponentModel.Description("Symbol to search for (class / table / EDT / enum / label). With --xref, qualify a method/field as \"Owner.member\" (e.g. SalesTable.initFromSalesQuotationTable) or pass an AOT path to scope the where-used to its declaring type; a bare member name matches that name on every type. A label reference (\"@WAX2194\" or \"@LabelFile:LabelId\") returns that label's where-used: every AOT object (form caption, menu item, field label, X++ source) in the model that ships the label file and the custom models that depend on it.")]
+        [System.ComponentModel.Description("Symbol to search for (class / table / EDT / enum / label). With --xref, qualify a method/field as \"Owner.member\" (e.g. SalesTable.initFromSalesQuotationTable) or pass an AOT path to scope the where-used to its declaring type; a bare member name matches that name on every type. A label reference (\"@WAX2194\" or \"@LabelFile:LabelId\") returns that label's where-used: every AOT object (form caption, menu item, field label, X++ source) in the model that ships the label file and the custom models that depend on it. A bare object name that only custom models define is searched the same way (whole XML of the owner and its dependent custom models, so metadata uses such as a button's MenuItemName are found); a standard object's name goes to the DYNAMICSXREFDB by its exact AOT path when the bridge is available.")]
         public string Name { get; init; } = "";
 
         [CommandOption("--kind <KIND>")]
@@ -208,14 +208,35 @@ public sealed class FindRefsCommand : Command<FindRefsCommand.Settings>
         // line/column plus reference kind (Call/Read/Set/Type/...). An "Owner.member" needle goes
         // here even without --xref when the bridge is available: only the xref DB can scope a member
         // to its declaring type, while the body scan reads every source file to approximate it.
-        var qualifiedMember = D365FO.Core.Index.MethodSourceSearch.QualifiedMember(settings.Name) is not null;
-        if ((settings.Xref || qualifiedMember) && BridgeGate.ShouldTry())
+        // So does a standard object's bare name: it can be used from every package, and without the
+        // xref DB the scan reads every form in PackagesLocalDirectory (~90,000 files, ~13 minutes).
+        // An object only custom models define is answered by the scan of those models instead.
+        var name = settings.Name.Trim();
+        var qualifiedMember = D365FO.Core.Index.MethodSourceSearch.QualifiedMember(name) is not null;
+        var bareName = !qualifiedMember && !name.StartsWith('/') && !D365FO.Core.Index.LabelReferenceSearch.IsLabelToken(name);
+        var repo = RepoFactory.Create();
+        var standardObject = bareName && string.IsNullOrWhiteSpace(settings.Model)
+                             && D365FO.Core.Index.ObjectReferenceSearch.IsStandardObject(repo, name);
+        if ((settings.Xref || qualifiedMember || standardObject) && BridgeGate.ShouldTry())
         {
-            var xref = BridgeGate.TryFindReferences(settings.Name, settings.Kind, settings.Limit);
+            // A bare name is looked up by its exact AOT path ("/Tables/CustTable"), as Visual Studio
+            // does. Sent as a bare name, the bridge matches it with "%/name%", which reads all 5M+ rows
+            // of Names and ran past the bridge timeout.
+            var targets = bareName ? D365FO.Core.Index.ObjectReferenceSearch.XrefPaths(repo, name) : [name];
+            var xref = BridgeGate.TryFindReferences(targets, settings.Kind, settings.Limit);
             if (xref is not null)
             {
                 xref["_source"] = "xrefdb";
-                return RenderHelpers.Render(kind, ToolResult<object>.Success((object)xref));
+                string[]? warnings = bareName
+                    ?
+                    [
+                        "DYNAMICSXREFDB holds X++ code references as of each model's last build with cross-reference data; "
+                        + "a service update does not refresh it. Uses in metadata properties (a button's MenuItemName, a "
+                        + "privilege entry point) and code not built since are not included — `find refs <Name> --model "
+                        + "<CustomModel>` scans one model's source.",
+                    ]
+                    : null;
+                return RenderHelpers.Render(kind, ToolResult<object>.Success((object)xref, warnings));
             }
             // Fall through to regex scan if bridge / DB unavailable.
         }
@@ -226,9 +247,8 @@ public sealed class FindRefsCommand : Command<FindRefsCommand.Settings>
         // ToolResult.Fail instead of an unhandled exception (issue #101).
         try
         {
-            var repo = RepoFactory.Create();
             var result = new D365FO.Mcp.ToolHandlers(repo)
-                .FindReferences(settings.Name, settings.Kind, settings.Model, settings.Limit);
+                .FindReferences(name, settings.Kind, settings.Model, settings.Limit);
             return RenderHelpers.Render(kind, result);
         }
         catch (Exception ex)

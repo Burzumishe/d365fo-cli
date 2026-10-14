@@ -2289,6 +2289,36 @@ public sealed partial class MetadataRepository
     }
 
     /// <summary>
+    /// Every root AOT object called <paramref name="name"/>, with its model. A table and its form
+    /// often share a name, so there can be several. <c>Kind</c> is the AOT folder without its
+    /// <c>Ax</c> prefix (<c>Table</c>, <c>MenuItemDisplay</c>, <c>DataEntityView</c>, …).
+    /// </summary>
+    public IReadOnlyList<(string Kind, string Model, bool IsCustom)> FindObjectsByName(string name)
+    {
+        using var conn = OpenReadOnly();
+        var rows = conn.Query<(string Kind, string Model, long IsCustom)>(@"
+            SELECT o.Kind, m.Name, m.IsCustom FROM (
+                SELECT 'Table' AS Kind, ModelId FROM Tables WHERE Name = @name
+                UNION ALL SELECT 'Class', ModelId FROM Classes WHERE Name = @name
+                UNION ALL SELECT 'Edt', ModelId FROM Edts WHERE Name = @name
+                UNION ALL SELECT 'Enum', ModelId FROM Enums WHERE Name = @name
+                UNION ALL SELECT 'MenuItem' || Kind, ModelId FROM MenuItems WHERE Name = @name
+                UNION ALL SELECT 'Form', ModelId FROM Forms WHERE Name = @name
+                UNION ALL SELECT 'Query', ModelId FROM Queries WHERE Name = @name
+                UNION ALL SELECT 'View', ModelId FROM Views WHERE Name = @name
+                UNION ALL SELECT 'DataEntityView', ModelId FROM DataEntities WHERE Name = @name
+                UNION ALL SELECT 'Report', ModelId FROM Reports WHERE Name = @name
+                UNION ALL SELECT 'Map', ModelId FROM Maps WHERE Name = @name
+                UNION ALL SELECT 'SecurityRole', ModelId FROM SecurityRoles WHERE Name = @name
+                UNION ALL SELECT 'SecurityDuty', ModelId FROM SecurityDuties WHERE Name = @name
+                UNION ALL SELECT 'SecurityPrivilege', ModelId FROM SecurityPrivileges WHERE Name = @name
+                UNION ALL SELECT 'ConfigurationKey', ModelId FROM ConfigurationKeys WHERE Name = @name
+                UNION ALL SELECT 'Tile', ModelId FROM Tiles WHERE Name = @name
+            ) o JOIN Models m ON m.ModelId = o.ModelId", new { name });
+        return rows.Select(r => (r.Kind, r.Model, r.IsCustom != 0)).Distinct().ToList();
+    }
+
+    /// <summary>
     /// Folder of each model on disk (<c>&lt;Package&gt;/&lt;Model&gt;</c>, the parent of its
     /// <c>Ax*</c> folders), keyed by model name. The index stores no model path, so it is read
     /// back from one indexed object or label file per model; a model with neither is absent.

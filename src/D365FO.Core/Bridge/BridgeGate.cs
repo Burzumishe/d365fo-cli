@@ -200,8 +200,15 @@ public static class BridgeGate
     /// scanner.
     /// </summary>
     public static JsonObject? TryFindReferences(string symbol, string? kind, int limit)
+        => TryFindReferences([symbol], kind, limit);
+
+    /// <summary>
+    /// One where-used over several targets — a table, its form and its menu item often share a
+    /// name — answered by a single bridge query.
+    /// </summary>
+    public static JsonObject? TryFindReferences(IReadOnlyList<string> symbols, string? kind, int limit)
     {
-        if (!BridgeClient.IsAvailable()) return null;
+        if (symbols.Count == 0 || !BridgeClient.IsAvailable()) return null;
         try
         {
             // A where-used on a widely used symbol resolves thousands of target names and
@@ -209,7 +216,9 @@ public static class BridgeGate
             // a cold bridge timed out and the caller silently got the regex scan instead.
             var options = DefaultOptions() with { RequestTimeout = TimeSpan.FromSeconds(60) };
             using var client = new BridgeClient(options);
-            var args = new JsonObject { ["symbol"] = symbol, ["limit"] = limit };
+            var args = new JsonObject { ["limit"] = limit };
+            if (symbols.Count == 1) args["symbol"] = symbols[0];
+            else args["symbols"] = new JsonArray(symbols.Select(s => (JsonNode?)JsonValue.Create(s)).ToArray());
             if (!string.IsNullOrEmpty(kind)) args["kind"] = kind;
             var result = client.SendAsync("findReferences", args).GetAwaiter().GetResult();
             if (result is null) return null;

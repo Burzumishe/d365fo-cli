@@ -2799,6 +2799,32 @@ public sealed partial class ToolHandlers
         if (LabelReferenceSearch.IsLabelToken(name))
             return FindLabelReferences(name, kind, model, limit);
 
+        // An object only custom models define can only be used there: read those models' whole
+        // XML, which also finds metadata uses (a button's MenuItemName) the method index never sees.
+        if (string.IsNullOrWhiteSpace(model) && MethodSourceSearch.QualifiedMember(name) is null && !name.StartsWith('/'))
+        {
+            var objectRefs = ObjectReferenceSearch.FindInCustomModels(_repo, name.Trim(), kind, limit);
+            if (objectRefs is not null)
+                return ToolResult<object>.Success(new
+                {
+                    needle = objectRefs.Needle,
+                    via = "object-scan",
+                    owners = objectRefs.Owners,
+                    modelsScanned = objectRefs.ModelsScanned,
+                    filesScanned = objectRefs.FilesScanned,
+                    count = objectRefs.Hits.Count,
+                    truncated = objectRefs.Truncated,
+                    items = objectRefs.Hits.Select(h => new
+                    {
+                        kind = h.Kind,
+                        name = h.Name,
+                        model = h.Model,
+                        matches = h.Matches.Select(l => new { line = l.Line, text = l.Text }),
+                        path = h.Path,
+                    }).ToList(),
+                }, objectRefs.Caveat is null ? null : [objectRefs.Caveat]);
+        }
+
         var result = MethodSourceSearch.Find(_repo, name, kind, model, limit);
         var items = result.Hits.Select(h => new
         {
