@@ -48,6 +48,18 @@ public sealed class XppMethodSourceTests
         => Assert.Equal("        a;\n        if (b)\n            c;",
             XppMethodSource.IndentBlock("\n            a;\n            if (b)\n                c;\n", "        "));
 
+    /// <summary>
+    /// Rewriting a method with its own statements (the real initTmpLines ends with a line holding
+    /// only spaces) used to drop that line and show a change in the diff.
+    /// </summary>
+    [Fact]
+    public void IndentBlock_keeps_text_already_at_the_level_byte_for_byte()
+    {
+        const string statements = "        a;\n        if (b)\n        {\n            c;  \n        }\n        ";
+
+        Assert.Equal(statements, XppMethodSource.IndentBlock("\n" + statements + "\n", "        "));
+    }
+
     [Fact]
     public void SplitLeadingDocComment_separates_doc_lines_from_statements()
     {

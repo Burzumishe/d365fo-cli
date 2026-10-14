@@ -81,22 +81,32 @@ public static class XppMethodSource
     }
 
     /// <summary>
-    /// Re-indent a block of lines: drop leading/trailing blank lines, remove the indentation the
-    /// lines have in common, then prefix every non-blank line with <paramref name="indent"/>.
-    /// Already-indented input is therefore not indented twice.
+    /// Re-indent a block of lines to <paramref name="indent"/>: remove the indentation the lines
+    /// have in common and prefix every non-blank line with <paramref name="indent"/>, so
+    /// already-indented input is not indented twice. Text already at that level is returned
+    /// unchanged apart from empty lines at its edges — rewriting a method with its own statements
+    /// must not show up in a diff.
     /// </summary>
     public static string IndentBlock(string text, string indent)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
+        while (lines.Count > 0 && lines[0].Length == 0) lines.RemoveAt(0);
+        while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+
+        var codeLines = lines.Where(l => l.Trim().Length > 0).ToList();
+        var alreadyAtLevel = codeLines.Count > 0
+            && codeLines.All(l => l.StartsWith(indent, StringComparison.Ordinal))
+            && codeLines.Any(l => !char.IsWhiteSpace(l[indent.Length]));
+        if (alreadyAtLevel) return string.Join("\n", lines);
+
         while (lines.Count > 0 && lines[0].Trim().Length == 0) lines.RemoveAt(0);
         while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
-
-        var common = lines.Where(l => l.Trim().Length > 0)
+        var common = codeLines
             .Select(l => l.Length - l.TrimStart(' ', '\t').Length)
             .DefaultIfEmpty(0)
             .Min();
 
-        return string.Join("\n", lines.Select(l => l.Trim().Length == 0 ? string.Empty : indent + l[common..].TrimEnd()));
+        return string.Join("\n", lines.Select(l => l.Trim().Length == 0 ? string.Empty : indent + l[common..]));
     }
 
     private static Regex DeclarationRegex(string methodName) => new(
