@@ -26,6 +26,7 @@ With no profile selected, step 3 does not exist and resolution is exactly what i
 | `D365FO_CONFIG_DIR` | Relocates the whole config root (`settings.json`, `profiles\`, default index DB). Process env only. Useful for throw-away or portable configs — Windows ignores a changed `LOCALAPPDATA` env var | `%LOCALAPPDATA%\d365fo-cli` |
 | `D365FO_WORKSPACE_PATH` | Root of your X++ solution (enables scaffold output) | — |
 | `D365FO_CUSTOM_MODELS` | Comma-separated list of custom model names | — |
+| `D365FO_EXTENSION_SUFFIX` | Naming suffix for a suffix-only convention, e.g. `_TKM`. `generate coc` names the class `<Target>_TKM_Extension`, `generate extension` defaults its token to `Extension_TKM` (`CustTable.Extension_TKM`), and `validate name` / `prepare` warn (`MISSING_SUFFIX`) when a new object, CoC class or element extension lacks it. The CLI never prepends a prefix, so no prefix setting exists | — |
 | `D365FO_BRIDGE_ENABLED` | `1`/`true` enables the metadata bridge (required for `generate --install-to` and `find refs --xref`) | `false` |
 | `D365FO_BRIDGE_PATH` | Path to `D365FO.Bridge.exe` (auto-detected next to `d365fo.exe` when unset) | *(auto)* |
 | `D365FO_BIN_PATH` | Folder containing `Microsoft.Dynamics.AX.Metadata.*.dll` (usually `<PackagesLocalDirectory>\bin`) | — |

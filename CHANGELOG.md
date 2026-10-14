@@ -19,6 +19,32 @@ was ported from.
 
 ## [Unreleased]
 
+### Added — suffix-only naming (`D365FO_EXTENSION_SUFFIX`)
+
+- **`D365FO_EXTENSION_SUFFIX`** (e.g. `_TKM`) gives the generators the suffix convention of the
+  `d365fo-mcp-server` suffix style: `generate coc CustTable` writes `CustTable_TKM_Extension`,
+  and `generate extension Table CustTable` defaults its token to `Extension_TKM` (`--suffix`
+  still overrides). `validate name`, `prepare create` and `prepare change --proposed-name`
+  report `MISSING_SUFFIX` with the expected name when it is absent.
+- **`generate coc --class-name` / `--target-kind`** (MCP: `className` / `targetKind`) override
+  the derived class name and the target kind.
+
+### Fixed — `generate coc` wrote wrappers that did not compile
+
+- **Wrong `[ExtensionOf]` intrinsic for a Table/Form pair.** The target kind came from the
+  alphabetical kind list, so `generate coc CustTable` wrote `formStr(CustTable)`. It now uses
+  the priority `prepare change` uses (table, class, form, …; shared as `SymbolKindPriority`)
+  and warns which other kinds the name has. The MCP handler always wrote `classStr` and now
+  resolves the kind too.
+- **Every wrapper was `public void m() { next m(); }`.** Wrappers are now built from the base
+  method's declaration, read from the declaring object's source (the target, then its base
+  classes — the index keeps only the first line of a multi-line declaration), falling back to
+  the kernel table methods (`validateWrite`, `insert`, …). Default parameter values are
+  dropped, every parameter is passed to `next`, and a value-returning method returns what
+  `next` returned. When no signature is found the old stub is written with a warning.
+- **A whole CoC class name as target.** `generate coc CustTable_TKM_Extension` wrapped a
+  nonexistent `CustTable_TKM`; with the suffix configured it resolves to `CustTable`.
+
 ### Added — named configuration profiles, one per D365FO environment/UDE (#210)
 
 - **Profiles are files, `%LOCALAPPDATA%\d365fo-cli\profiles\<name>.json`,** in the same flat

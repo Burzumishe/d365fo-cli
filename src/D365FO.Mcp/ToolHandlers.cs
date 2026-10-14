@@ -453,7 +453,7 @@ public sealed partial class ToolHandlers
 
     public ToolResult<object> ValidateObjectNaming(string kind, string name, string? prefix = null)
     {
-        var violations = ObjectNamingRules.Validate(kind, name, prefix);
+        var violations = ObjectNamingRules.Validate(kind, name, prefix, ExtensionNaming.ConfiguredSuffix());
         var hasError = violations.Any(v => v.Severity == "error");
         return ToolResult<object>.Success(new
         {
@@ -1211,7 +1211,9 @@ public sealed partial class ToolHandlers
             return ToolResult<object>.Fail("BAD_INPUT", "target is required: the object being extended.");
         try
         {
-            var effectiveSuffix = string.IsNullOrWhiteSpace(suffix) ? "Extension" : suffix!;
+            var effectiveSuffix = string.IsNullOrWhiteSpace(suffix)
+                ? D365FO.Core.ExtensionNaming.ElementExtensionToken(D365FO.Core.ExtensionNaming.ConfiguredSuffix(), model: null)
+                : suffix!;
             if (string.Equals((extensionKind ?? "").Replace("-", ""), "menu", StringComparison.OrdinalIgnoreCase))
             {
                 // A menu extension is its additions: the same spellings `generate menu` takes,
@@ -1497,32 +1499,23 @@ public sealed partial class ToolHandlers
 
     public ToolResult<object> GenerateCoc(
         string target, string[] methods,
-        string? installTo, string? outPath, bool overwrite, string? groundingToken = null)
+        string? installTo, string? outPath, bool overwrite, string? groundingToken = null,
+        string? targetKind = null, string? className = null)
     {
         if (string.IsNullOrWhiteSpace(target))
             return ToolResult<object>.Fail("BAD_INPUT", "target is required.");
         if (methods is null || methods.Length == 0)
             return ToolResult<object>.Fail("BAD_INPUT", "At least one method is required.");
 
-        // A target spelled as the extension itself (Base.Suffix, Base_Extension) is
-        // rewritten to its base rather than suffixed twice.
-        target = D365FO.Core.ObjectNamingRules.NormalizeExtensionTarget(target, out var renameNote);
+        var plan = D365FO.Core.Scaffolding.CocScaffold.Build(
+            _repo, target, methods, targetKind, className, D365FO.Core.ExtensionNaming.ConfiguredSuffix());
+        target = plan.Target;
+        var warnings = new List<string>(plan.Warnings);
 
-        // Guardrail: warn if CoC wrappers already exist.
-        var warnings = new List<string>();
-        if (renameNote is not null) warnings.Add(renameNote);
-        try
-        {
-            var existing = _repo.FindCocExtensions(target);
-            if (existing.Count > 0)
-                warnings.Add($"There are already {existing.Count} CoC extension(s) of '{target}'. Consider extending an existing one instead.");
-        }
-        catch { /* not fatal */ }
-
-        var extensionName = target + "_Extension";
-        var doc = D365FO.Core.Scaffolding.XppScaffolder.CocExtension(target, methods);
+        var extensionName = plan.ClassName;
+        var doc = plan.Doc;
         var result = WriteScaffold(doc, extensionName, "AxClass", "AxClass", installTo, outPath, overwrite,
-            new { target, methodCount = methods.Length },
+            new { target, targetKind = plan.TargetKind, methodCount = methods.Length },
             groundingToken: groundingToken, targetObject: target, requiredSymbols: [target]);
 
         // Attach warnings to a successful result envelope.
@@ -2080,7 +2073,7 @@ public sealed partial class ToolHandlers
         var resolvedGoal = goal ?? "(not stated)";
 
         var kinds = _repo.SymbolKinds(objectName);
-        var objectType = type?.Trim().ToLowerInvariant() ?? PreferredKind(kinds);
+        var objectType = type?.Trim().ToLowerInvariant() ?? D365FO.Core.Index.SymbolKindPriority.Preferred(kinds);
         // SalesTable, CustTable, … are both a table and a form. Say which one was picked so
         // the caller can re-ask with --type instead of reading form strategies for a table.
         var otherKinds = type is null
@@ -2161,7 +2154,7 @@ public sealed partial class ToolHandlers
         object? naming = null;
         if (!string.IsNullOrEmpty(proposedName))
         {
-            var violations = ObjectNamingRules.Validate("Coc", proposedName!, prefix);
+            var violations = ObjectNamingRules.Validate("Coc", proposedName!, prefix, ExtensionNaming.ConfiguredSuffix());
             var collision = _repo.SymbolKinds(proposedName!);
             naming = new
             {
@@ -2200,19 +2193,6 @@ public sealed partial class ToolHandlers
                 : "Pass the grounding token to generate to confirm this context was used. " +
                   "Set D365FO_GROUNDING_ENFORCE=true to require it.",
         });
-    }
-
-    // Order for a name several kinds share. SymbolKinds comes back from a SQL UNION, i.e.
-    // alphabetically, which put "form" ahead of "table" for every Table/Form pair. A CoC or
-    // field change on such a name almost always means the table (or the class).
-    private static readonly string[] KindPriority =
-        ["table", "class", "form", "view", "data-entity", "query", "map", "enum", "edt", "menu-item"];
-
-    private static string? PreferredKind(IReadOnlyList<string> kinds)
-    {
-        foreach (var k in KindPriority)
-            if (kinds.Contains(k)) return k;
-        return kinds.FirstOrDefault();
     }
 
     /// <summary>
@@ -2255,7 +2235,7 @@ public sealed partial class ToolHandlers
                                  || name.EndsWith("_Extension", StringComparison.OrdinalIgnoreCase);
         if (!looksLikeExtension) return null;
 
-        var normalized = ObjectNamingRules.NormalizeExtensionTarget(name, out _);
+        var normalized = ObjectNamingRules.NormalizeExtensionTarget(name, out _, ExtensionNaming.ConfiguredSuffix());
         return string.Equals(normalized, name, StringComparison.Ordinal) ? null : normalized;
     }
 
@@ -2297,7 +2277,7 @@ public sealed partial class ToolHandlers
                 "menu-item" => "MenuItem",
                 _ => char.ToUpperInvariant(objectType[0]) + objectType[1..],
             };
-        var violations = ObjectNamingRules.Validate(namingKind, finalName, prefix);
+        var violations = ObjectNamingRules.Validate(namingKind, finalName, prefix, ExtensionNaming.ConfiguredSuffix());
         object? extensionBase = null;
         if (extendedObject is not null)
         {

@@ -275,8 +275,17 @@ public static class XppScaffolder
     /// X++ compiler verifies at compile time.</param>
     /// <param name="wrappedMethods">Methods that get a `next` wrapper.</param>
     public static XDocument CocExtension(string targetClass, string targetKind, params string[] wrappedMethods)
+        => CocExtension(targetClass, targetKind, targetClass + "_Extension",
+            wrappedMethods.Select(m => (m, CocWrapper.Stub(m))).ToList());
+
+    /// <param name="targetClass">Name of the CoC target object.</param>
+    /// <param name="targetKind">AOT kind of the CoC target; selects the [ExtensionOf] intrinsic.</param>
+    /// <param name="className">The extension class name (<see cref="ExtensionNaming.CocClassName"/>).</param>
+    /// <param name="methods">Method name and full wrapper source (<see cref="CocWrapper"/>).</param>
+    public static XDocument CocExtension(string targetClass, string targetKind, string className,
+        IReadOnlyList<(string Name, string Source)> methods)
     {
-        var name = targetClass + "_Extension";
+        var name = className;
         var intrinsic = targetKind.ToLowerInvariant() switch
         {
             // Data entities are table-like — their CoC uses tableStr too.
@@ -285,10 +294,9 @@ public static class XppScaffolder
             "map" => "mapStr",
             _ => "classStr",
         };
-        var methodEls = wrappedMethods.Select(m => new XElement("Method",
-            new XElement("Name", m),
-            new XElement("Source",
-                new XCData($"public void {m}()\n{{\n    next {m}();\n    // extension logic here\n}}\n"))));
+        var methodEls = methods.Select(m => new XElement("Method",
+            new XElement("Name", m.Name),
+            new XElement("Source", new XCData(m.Source))));
 
         // <Methods> MUST be nested inside <SourceCode> (after <Declaration>) —
         // this is the canonical AxClass shape the metadata deserializer expects.

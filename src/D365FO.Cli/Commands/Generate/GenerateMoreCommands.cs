@@ -321,7 +321,7 @@ public sealed class GenerateExtensionCommand : Command<GenerateExtensionCommand.
         public string Target { get; init; } = "";
 
         [CommandOption("--suffix <SUFFIX>")]
-        [System.ComponentModel.Description("Extension suffix. Defaults to the InstallTo model name or 'Extension'.")]
+        [System.ComponentModel.Description("Extension suffix (the token after the dot). Defaults to 'Extension' + D365FO_EXTENSION_SUFFIX when that is set, else the InstallTo model name, else 'Extension'.")]
         public string? Suffix { get; init; }
 
         [CommandOption("--field <SPEC>")]
@@ -424,7 +424,8 @@ public sealed class GenerateExtensionCommand : Command<GenerateExtensionCommand.
             return RenderHelpers.Render(kind, ToolResult<object>.Fail(D365FoErrorCodes.BadInput, "--out or --install-to is required."));
 
         var suffix = settings.Suffix
-            ?? (hasInstall ? settings.InstallTo! : "Extension");
+            ?? D365FO.Core.ExtensionNaming.ElementExtensionToken(
+                D365FO.Core.ExtensionNaming.ConfiguredSuffix(), hasInstall ? settings.InstallTo : null);
         var normalizedKind = settings.Kind.Replace("-", "").Replace("_", "");
         var axFolder = normalizedKind.ToLowerInvariant() switch
         {

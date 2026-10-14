@@ -803,12 +803,20 @@ public sealed class GenerateCocCommand : Command<GenerateCocCommand.Settings>
     public sealed class Settings : GenerateSettings
     {
         [CommandArgument(0, "<TARGET>")]
-        [System.ComponentModel.Description("Target class name. Extension will be named <TARGET>_Extension.")]
+        [System.ComponentModel.Description("Target class/table/form name. Extension is named <TARGET>{D365FO_EXTENSION_SUFFIX}_Extension (<TARGET>_Extension without a suffix).")]
         public string Target { get; init; } = "";
 
         [CommandOption("--method <NAME>")]
-        [System.ComponentModel.Description("Repeatable. Each method gets a `next` wrapper.")]
+        [System.ComponentModel.Description("Repeatable. Each method gets a `next` wrapper with the base method's signature (default values removed).")]
         public string[] Methods { get; init; } = Array.Empty<string>();
+
+        [CommandOption("--target-kind <KIND>")]
+        [System.ComponentModel.Description("class, table, form, view, data-entity or map. Default: from the index, table before class before form when a name is several.")]
+        public string? TargetKind { get; init; }
+
+        [CommandOption("--class-name <NAME>")]
+        [System.ComponentModel.Description("Extension class name, overriding the one derived from the target and D365FO_EXTENSION_SUFFIX.")]
+        public string? ClassName { get; init; }
     }
 
     public override int Execute(CommandContext ctx, Settings settings)
@@ -819,28 +827,16 @@ public sealed class GenerateCocCommand : Command<GenerateCocCommand.Settings>
         if (settings.Methods.Length == 0)
             return RenderHelpers.Render(kind, ToolResult<object>.Fail("BAD_INPUT", "At least one --method required."));
 
-        // A target spelled as the extension itself (Base.Suffix, Base_Extension) is
-        // rewritten to its base rather than suffixed twice.
-        var target = D365FO.Core.ObjectNamingRules.NormalizeExtensionTarget(settings.Target, out var renameNote);
-
-        // Guardrail: warn if the target already has CoC wrappers, and resolve
-        // the target's AOT kind so [ExtensionOf] uses the right intrinsic
-        // (tableStr for tables, classStr for classes, …).
-        var warnings = new List<string>();
-        if (renameNote is not null) warnings.Add(renameNote);
-        var targetKind = "class";
-        try
-        {
-            var repo = RepoFactory.Create();
-            var existing = repo.FindCocExtensions(target);
-            if (existing.Count > 0)
-                warnings.Add($"There are already {existing.Count} CoC extension(s) of {target}. Consider extending an existing one instead of stacking a new wrapper.");
-            var kinds = repo.SymbolKinds(target);
-            targetKind = kinds.FirstOrDefault(k => k is "class" or "table" or "form" or "data-entity" or "map" or "view") ?? "class";
-        }
+        D365FO.Core.Index.MetadataRepository? repo = null;
+        try { repo = RepoFactory.Create(); }
         catch { /* index may be empty; not fatal */ }
 
-        var doc = XppScaffolder.CocExtension(target, targetKind, settings.Methods);
+        var plan = D365FO.Core.Scaffolding.CocScaffold.Build(
+            repo, settings.Target, settings.Methods, settings.TargetKind, settings.ClassName,
+            D365FO.Core.ExtensionNaming.ConfiguredSuffix());
+        var target = plan.Target;
+        var doc = plan.Doc;
+        var warnings = new List<string>(plan.Warnings);
 
         // Grounding gate: prove the target and every wrapped method against the
         // index; fail closed under D365FO_GROUNDING_ENFORCE=true.
@@ -853,12 +849,14 @@ public sealed class GenerateCocCommand : Command<GenerateCocCommand.Settings>
         warnings.AddRange(gate.Warnings);
 
         return GenerateInstaller.Emit(
-            kind, gate, settings, "class", Folders.Class, target + "_Extension",
+            kind, gate, settings, "class", Folders.Class, plan.ClassName,
             doc,
             r => new
             {
                 kind = "AxClass",
-                name = target + "_Extension",
+                name = plan.ClassName,
+                target,
+                targetKind = plan.TargetKind,
                 source = r.Source,
                 path = r.Path,
                 bytes = r.Bytes,

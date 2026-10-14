@@ -27,7 +27,7 @@ public sealed class ValidateNameCommand : Command<ValidateNameCommand.Settings>
     public override int Execute(CommandContext ctx, Settings settings)
     {
         var kind = OutputMode.Resolve(settings.Output);
-        var violations = ObjectNamingRules.Validate(settings.Kind, settings.Name, settings.Prefix);
+        var violations = ObjectNamingRules.Validate(settings.Kind, settings.Name, settings.Prefix, ExtensionNaming.ConfiguredSuffix());
         var hasError = violations.Any(v => v.Severity == "error");
         return RenderHelpers.Render(kind, ToolResult<object>.Success(new
         {

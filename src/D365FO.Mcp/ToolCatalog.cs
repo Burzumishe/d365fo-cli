@@ -431,7 +431,8 @@ public static class ToolCatalog
             "• WRITE to disk (requires `installTo` model name — resolves the path from the configured packages " +
             "paths — or `out` explicit path): table (pattern-aware, `fields` \"<name>:<edt>[:mandatory]\", " +
             "`pattern` main|transaction|parameter|group|reference|miscellaneous) · class (`extends`, `nonFinal`) · " +
-            "coc (`target` + `methods`, writes <target>_Extension) · form (`table`, `pattern` SimpleList|" +
+            "coc (`target` + `methods`, writes <target>{D365FO_EXTENSION_SUFFIX}_Extension with each base " +
+            "signature; `targetKind` table|class|form|… when the name is several, `className` to override) · form (`table`, `pattern` SimpleList|" +
             "SimpleListDetails|DetailsMaster|DetailsTransaction|Dialog|TableOfContents|Lookup|ListPage|Workspace, " +
             "`caption`, `fields`, `linesTable`).\n" +
             "• XML-only, no file written (cloud/Linux friendly): edt (`extends`, `label`, `size`) · enum (`label`, " +
@@ -478,7 +479,7 @@ public static class ToolCatalog
             Schema(("objectType", "string", true), ("name", "string", false), ("label", "string", false),
                    ("fields", "array", false), ("pattern", "string", false),
                    ("extends", "string", false), ("nonFinal", "boolean", false),
-                   ("target", "string", false), ("methods", "array", false),
+                   ("target", "string", false), ("methods", "array", false), ("targetKind", "string", false),
                    ("table", "string", false), ("caption", "string", false), ("linesTable", "string", false),
                    ("size", "integer", false), ("values", "array", false),
                    ("rootTable", "string", false), ("executionMode", "string", false),
@@ -532,7 +533,7 @@ public static class ToolCatalog
                             StrOrNull(p, "groundingToken")),
                 "coc"   => h.GenerateCoc(Str(p, "target"), StrArray(p, "methods") ?? Array.Empty<string>(),
                             StrOrNull(p, "installTo"), StrOrNull(p, "out"), Bool(p, "overwrite"),
-                            StrOrNull(p, "groundingToken")),
+                            StrOrNull(p, "groundingToken"), StrOrNull(p, "targetKind"), StrOrNull(p, "className")),
                 "form"  => h.GenerateForm(Str(p, "name"), StrOrNull(p, "table"), StrOrNull(p, "pattern"),
                             StrOrNull(p, "caption"), StrArray(p, "fields"), StrOrNull(p, "linesTable"),
                             StrOrNull(p, "installTo"), StrOrNull(p, "out"), Bool(p, "overwrite"),

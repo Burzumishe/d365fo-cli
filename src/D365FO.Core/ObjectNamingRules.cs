@@ -23,7 +23,13 @@ public static class ObjectNamingRules
     /// Idempotent; <paramref name="note"/> carries one line per rewrite for callers that
     /// surface it.
     /// </summary>
-    public static string NormalizeExtensionTarget(string target, out string? note)
+    /// <param name="extensionSuffix">
+    /// The workspace suffix (<see cref="ExtensionNaming.ConfiguredSuffix"/>). When the target
+    /// is a whole CoC class name in the suffix convention (<c>CustTable_TKM_Extension</c>),
+    /// the suffix is part of the class name, not of the target, and is stripped too —
+    /// otherwise the wrapper extends a <c>CustTable_TKM</c> that does not exist.
+    /// </param>
+    public static string NormalizeExtensionTarget(string target, out string? note, string? extensionSuffix = null)
     {
         note = null;
         if (string.IsNullOrWhiteSpace(target)) return target;
@@ -40,6 +46,10 @@ public static class ObjectNamingRules
         if (effective.EndsWith("_Extension", StringComparison.OrdinalIgnoreCase))
         {
             effective = effective[..^"_Extension".Length];
+            if (!string.IsNullOrEmpty(extensionSuffix)
+                && effective.Length > extensionSuffix.Length
+                && effective.EndsWith(extensionSuffix, StringComparison.OrdinalIgnoreCase))
+                effective = effective[..^extensionSuffix.Length];
             note = $"Target \"{target}\" already carries the _Extension suffix — rewritten to base \"{effective}\" so the suffix is not doubled.";
         }
 
@@ -61,7 +71,11 @@ public static class ObjectNamingRules
             _ => false,
         };
 
-    public static IReadOnlyList<Violation> Validate(string kind, string name, string? prefix = null)
+    /// <param name="suffix">
+    /// The workspace suffix (<see cref="ExtensionNaming.ConfiguredSuffix"/>). When set, a name
+    /// that does not carry it in the shape its kind takes is reported as MISSING_SUFFIX.
+    /// </param>
+    public static IReadOnlyList<Violation> Validate(string kind, string name, string? prefix = null, string? suffix = null)
     {
         var v = new List<Violation>();
         if (string.IsNullOrWhiteSpace(name))
@@ -144,6 +158,49 @@ public static class ObjectNamingRules
             v.Add(new("MISSING_PUBLISHER_PREFIX", "warn",
                 $"Name does not start with the expected prefix '{prefix}'. Custom ISV artefacts must use the publisher prefix to avoid collisions."));
 
+        if (!string.IsNullOrEmpty(suffix))
+        {
+            var expected = ExpectedSuffixShape(kindNorm, name, suffix);
+            if (expected is not null)
+                v.Add(new("MISSING_SUFFIX", "warn",
+                    $"Name does not follow the workspace suffix '{suffix}' ({ExtensionNaming.SuffixKey}). Expected: {expected}."));
+        }
+
         return v;
     }
+
+    /// <summary>
+    /// The name <paramref name="name"/> should have under the suffix convention, or null when it
+    /// already has it (or the kind names a member, not an object, so the suffix does not apply).
+    /// The shapes match what the generators write: <c>CustTable_TKM_Extension</c>,
+    /// <c>CustTable.Extension_TKM</c>, <c>MyClass_TKM</c>.
+    /// </summary>
+    private static string? ExpectedSuffixShape(string kind, string name, string suffix)
+    {
+        if (MemberKinds.Contains(kind)) return null;
+
+        if (kind.Equals("Coc", StringComparison.OrdinalIgnoreCase) || kind.Equals("CocClass", StringComparison.OrdinalIgnoreCase))
+        {
+            var target = NormalizeExtensionTarget(name, out _, suffix);
+            var expected = ExtensionNaming.CocClassName(target, suffix);
+            return string.Equals(name, expected, StringComparison.OrdinalIgnoreCase) ? null : expected;
+        }
+
+        if (IsElementExtensionKind(kind))
+        {
+            var dot = name.IndexOf('.');
+            var token = dot > 0 ? name[(dot + 1)..] : "";
+            if (token.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return null;
+            var target = dot > 0 ? name[..dot] : NormalizeExtensionTarget(name, out _, suffix);
+            return $"{target}.{ExtensionNaming.ElementExtensionToken(suffix, model: null)}";
+        }
+
+        return name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ? null : name + suffix;
+    }
+
+    /// <summary>Kinds that name something inside an object; the object suffix is not theirs.</summary>
+    private static readonly HashSet<string> MemberKinds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Field", "TableField", "Method", "FieldGroup", "Index", "Relation", "Control", "DataSource",
+    };
 }
