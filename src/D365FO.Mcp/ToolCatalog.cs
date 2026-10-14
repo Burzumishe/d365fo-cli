@@ -629,7 +629,8 @@ public static class ToolCatalog
             "reference/BP validation gate as generate_object and blocks the write on any error-severity finding " +
             "(unconditionally — not gated by D365FO_GROUNDING_ENFORCE), then writes back through the provider. " +
             "No on-disk fallback: fails BRIDGE_REQUIRED when the bridge is unavailable. Use generate_object to " +
-            "create new objects/methods; use this only to change an existing method's body.",
+            "create new objects/methods; use this only to change an existing method's body. `body` is either the " +
+            "statements (the method's doc comment, signature and braces are kept) or the complete method.",
             Schema(("kind", "string", true), ("name", "string", true), ("method", "string", true),
                    ("body", "string", true), ("model", "string", false), ("groundingToken", "string", false)),
             (h, p) => h.ModifyMethod(Str(p, "kind"), Str(p, "name"), Str(p, "method"), Str(p, "body"),

@@ -242,6 +242,7 @@ public sealed class SchemaCommand : Command<SchemaCommand.Settings>
         C("daemon stop", "Stop daemon.", [], [], []),
         C("daemon status", "Report daemon status.", [], [], []),
         C("verify", "Do the model on disk and its .rnrproj agree? An unlisted object is never compiled.", ["[MODEL]"], ["--path", "--expect", "--output"], ["verify_project"]),
+        C("project add", "List existing objects (kind:Name) in a Visual Studio .rnrproj; already-listed objects are skipped.", ["<PROJECT>", "<OBJECTS>"], ["--root", "--output"], []),
         C("doctor", "Diagnose environment.", [], ["--output"], []),
         C("init", "Quickstart index/profile setup. With the global --profile <name>, writes that named profile instead of settings.json.", [], ["--packages", "--extra-packages", "--db", "--run-extract", "--dry-run", "--persist-profile", "--label-languages", "--no-wizard", "--output"], []),
         C("config list", "List named configuration profiles and which one is active (flag/env/settings). Select one per call with the global `d365fo --profile <name> <command>`.", [], ["--output"], []),

@@ -9,8 +9,8 @@
 ## 1. The offline gates — before every write
 
 ```sh
-d365fo validate references --file MyClass.xpp --output json   # exit 2 = hallucinated symbols
-d365fo validate xpp        --file MyClass.xpp --output json   # exit 2 = BP errors
+d365fo validate references MyClass.xpp --output json   # exit 2 = hallucinated symbols
+d365fo validate xpp        MyClass.xpp --output json   # exit 2 = BP errors
 d365fo lint --output sarif > lint.sarif                       # whole-model sweep
 ```
 

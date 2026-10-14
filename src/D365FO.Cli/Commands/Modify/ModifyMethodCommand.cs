@@ -30,7 +30,7 @@ public sealed class ModifyMethodCommand : Command<ModifyMethodCommand.Settings>
         public string Method { get; init; } = "";
 
         [CommandOption("--body <XPP>")]
-        [System.ComponentModel.Description("New X++ method body (statements only — no signature/braces). Required.")]
+        [System.ComponentModel.Description("New X++ statements — the method's doc comment, signature and braces are kept; or the complete method, which replaces those too. Required.")]
         public string? Body { get; init; }
 
         [CommandOption("--model <MODEL>")]

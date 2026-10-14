@@ -230,7 +230,7 @@ commands. Both surfaces use the same discriminator-based naming.
 | `security_info` (`mode=coverage`) | `d365fo security coverage <obj> --type <kind>` |
 | `extension_info` (`mode=coc`) | `d365fo find coc <Class>[::<method>]` |
 | `extension_info` (`mode=events`) | `d365fo find event-handlers <Target>` |
-| `find_references` / `resolve_references` | `d365fo find references <Name>` / `d365fo validate references --file <F>` |
+| `find_references` / `resolve_references` | `d365fo find references <Name>` / `d365fo validate references <F>` |
 | `get_workspace_info` | `d365fo doctor` + `d365fo index status` (incl. stale-index detection) |
 
 ### Grounded generation & gates

@@ -102,6 +102,7 @@ public class CliMcpParityTests
         ["config use"] = "See `config list` — persists a local selection, not an operation on metadata.",
         ["config current"] = "See `config list`.",
         ["version"] = "Reports the assembly version of the shell binary. The MCP server reports its own in `initialize`.",
+        ["project add"] = "Edits the developer's Visual Studio project, which lives in their local projects folder, not in the packages the server serves. A remote MCP server cannot see that folder; a local client runs the CLI.",
         ["index build"] = "Creates the index database. First-run setup, and the server needs a database to have been started at all.",
         ["index extract"] = "Walks the whole PackagesLocalDirectory — minutes of filesystem work, which is the wrong shape for a call someone waits on. The narrow form an agent actually needs is `index sync`, which re-reads one model and IS exposed (`index_sync`).",
         ["index refresh"] = "The incremental form of `index extract`, and the same reason. `index sync` is its per-model counterpart over MCP.",

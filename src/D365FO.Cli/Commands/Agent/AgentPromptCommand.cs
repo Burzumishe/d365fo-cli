@@ -129,9 +129,9 @@ not invent a name.
    suggestions, reusable labels, mined property defaults).
    Do NOT issue separate search/get/find calls for facts prepare already returns.
 2. `d365fo generate … --grounding-token <token> --install-to <Model>`.
-3. For hand-written X++: `d365fo validate references --file <f>` (proves every
+3. For hand-written X++: `d365fo validate references <f>` (proves every
    identifier against the index — fixes hallucinations BEFORE the compiler)
-   and `d365fo validate xpp --file <f>` (offline BP rules, <50 ms). Fix all
+   and `d365fo validate xpp <f>` (offline BP rules, <50 ms). Fix all
    errors in the same turn, re-validate, only then write.
 4. `d365fo build` — only when the user asks; failures come back as structured
    `xppcDiagnostics` `{object, member, line, column, message, hint}` — fix from
@@ -144,8 +144,8 @@ not invent a name.
 | Single-round change context + token | `d365fo prepare change <Object> --method <M> --goal "…"` |
 | Single-round new-object context + token | `d365fo prepare create <Name> --type <T> --goal "…"` |
 | Single-round SysTest context + token | `d365fo prepare test <Class> --goal "…"` |
-| Verify generated X++ vs index | `d365fo validate references --file <F>` |
-| Offline BP check of X++/XML | `d365fo validate xpp --file <F>` |
+| Verify generated X++ vs index | `d365fo validate references <F>` |
+| Offline BP check of X++/XML | `d365fo validate xpp <F>` |
 | Class methods | `d365fo get class <Name> --output json` |
 | Table fields/indexes/relations | `d365fo get table <Name> --output json` |
 | Several objects in one call (max 10) | `d365fo get batch table:CustTable class:CustTableType --output json` |
@@ -229,8 +229,8 @@ d365fo index refresh --model <Model>
 
 ### Hand-written X++ gate (always before writing)
 ```sh
-d365fo validate references --file <f> --output json   # exit 2 = hallucinated symbols
-d365fo validate xpp --file <f> --output json          # exit 2 = BP errors
+d365fo validate references <f> --output json   # exit 2 = hallucinated symbols
+d365fo validate xpp <f> --output json          # exit 2 = BP errors
 ```
 
 ### Subscribe to data event

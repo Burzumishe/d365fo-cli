@@ -93,6 +93,51 @@ public sealed class MethodModifyEngineTests : IDisposable
     }
 
     [Fact]
+    public void Modify_with_statements_keeps_the_signature_and_braces()
+    {
+        string? writtenXml = null;
+        using var harness = FakeBridge.Create(request =>
+        {
+            if ((string?)request["method"] == "updateObject")
+                writtenXml = ((string?)((JsonObject?)request["params"])!["xml"])?.Replace("\r\n", "\n");
+            return Response(request, new JsonObject { ["ok"] = true, ["xml"] = ClassXmlWithMethod });
+        });
+
+        var req = new MethodModifyEngine.ModifyRequest("class", "CustBalance", "calc", "return 2;", Model: "ApplicationSuite");
+        var result = MethodModifyEngine.ModifyCore(req, _repo, harness.Client);
+
+        Assert.True(result.Ok);
+        Assert.Contains("    real calc()\n    {\n        return 2;\n    }", writtenXml);
+    }
+
+    [Fact]
+    public void Modify_with_a_complete_method_replaces_the_signature_too()
+    {
+        string? writtenXml = null;
+        using var harness = FakeBridge.Create(request =>
+        {
+            if ((string?)request["method"] == "updateObject")
+                writtenXml = ((string?)((JsonObject?)request["params"])!["xml"])?.Replace("\r\n", "\n");
+            return Response(request, new JsonObject { ["ok"] = true, ["xml"] = ClassXmlWithMethod });
+        });
+
+        const string fullMethod = "    /// <summary>Balance in company currency.</summary>\n    public real calc()\n    {\n        return 3;\n    }\n";
+        var req = new MethodModifyEngine.ModifyRequest("class", "CustBalance", "calc", fullMethod, Model: "ApplicationSuite");
+        var result = MethodModifyEngine.ModifyCore(req, _repo, harness.Client);
+
+        Assert.True(result.Ok);
+        Assert.Contains(fullMethod, writtenXml);
+        Assert.Equal(1, CountOccurrences(writtenXml!, "calc()"));
+    }
+
+    private static int CountOccurrences(string text, string needle)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + 1, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    [Fact]
     public void Modify_unknown_method_fails_METHOD_NOT_FOUND_with_known_methods_hint()
     {
         using var harness = FakeBridge.Create(request =>

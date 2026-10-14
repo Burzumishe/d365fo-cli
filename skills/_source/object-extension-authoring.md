@@ -253,7 +253,7 @@ d365fo get security-policy CustCustomSecurityPolicy --output json
   `<DataSourceModifications>`, `<DataSourceReferences>`, `<DataSources>`,
   `<Controls>`, methods, extension properties, and pattern metadata.
 - Validate every changed XML file: XML parser first, then
-  `d365fo validate xpp --file <f> --code-type xml-any --output json`, then
+  `d365fo validate xpp <f> --code-type xml-any --output json`, then
   `d365fo index refresh --model <Model>`, then re-read the object with
   `d365fo get ... --output json`.
 - For new forms based on an example, read the example and keep the same pattern

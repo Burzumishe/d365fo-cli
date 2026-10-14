@@ -428,6 +428,11 @@ public static class CliApp
             cfg.AddCommand<BuildCommand>("build").WithDescription("Compile X++ projects/models with xppc, other projects with MSBuild (Windows VM).");
             cfg.AddCommand<SyncCommand>("sync").WithDescription("Run DB sync (Windows VM).");
             cfg.AddCommand<D365FO.Cli.Commands.Connect.ConnectCommand>("connect").WithDescription("Point an editor's MCP config at a deployed `d365fo-mcp --http` server (probes /health, merges rather than clobbers).");
+            cfg.AddBranch("project", b =>
+            {
+                b.SetDescription("Visual Studio project (.rnrproj) operations.");
+                b.AddCommand<D365FO.Cli.Commands.Project.ProjectAddCommand>("add").WithDescription("List existing objects in a .rnrproj the way Visual Studio does (Content + Link + Folder). An unlisted object is never compiled.");
+            });
             cfg.AddCommand<VerifyCommand>("verify").WithDescription("Do the model on disk and its .rnrproj agree? An object the project does not list is never compiled, and nothing else reports it.");
             cfg.AddCommand<DoctorCommand>("doctor").WithDescription("Diagnose environment.");
             cfg.AddCommand<InitCommand>("init").WithDescription("Interactive quickstart: detects PackagesLocalDirectory and prepares the index.");

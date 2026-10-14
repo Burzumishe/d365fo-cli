@@ -205,8 +205,11 @@ public sealed class FindRefsCommand : Command<FindRefsCommand.Settings>
             return RenderHelpers.Render(kind, ToolResult<object>.Fail("BAD_INPUT", "Name required."));
 
         // Bridge-backed compiler xref path — fast, precise, and returns
-        // line/column plus reference kind (Call/Read/Set/Type/...).
-        if (settings.Xref && BridgeGate.ShouldTry())
+        // line/column plus reference kind (Call/Read/Set/Type/...). An "Owner.member" needle goes
+        // here even without --xref when the bridge is available: only the xref DB can scope a member
+        // to its declaring type, while the body scan reads every source file to approximate it.
+        var qualifiedMember = D365FO.Core.Index.MethodSourceSearch.QualifiedMember(settings.Name) is not null;
+        if ((settings.Xref || qualifiedMember) && BridgeGate.ShouldTry())
         {
             var xref = BridgeGate.TryFindReferences(settings.Name, settings.Kind, settings.Limit);
             if (xref is not null)

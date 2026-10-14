@@ -77,8 +77,10 @@ public static class FormMethodScaffolder
 
     /// <summary>
     /// Build a compile-safe X++ method source. When <paramref name="customBody"/>
-    /// is supplied it is used verbatim (re-indented); otherwise a
-    /// <c>super()</c>-returning stub is generated from <paramref name="sig"/>.
+    /// is supplied it is used as the statements (re-indented to the method's level, so already
+    /// indented input is not indented twice); leading <c>///</c> lines in it become the doc
+    /// comment above the signature. Otherwise a <c>super()</c>-returning stub is generated from
+    /// <paramref name="sig"/>.
     /// </summary>
     public static string BuildMethodSource(FormMethodSignature sig, string? customBody = null)
     {
@@ -86,9 +88,10 @@ public static class FormMethodScaffolder
         string body;
         if (!string.IsNullOrWhiteSpace(customBody))
         {
-            var indented = string.Join("\n",
-                customBody.Replace("\r\n", "\n").Split('\n').Select(l => l.Length == 0 ? l : "        " + l));
-            body = indented;
+            var (docLines, statements) = XppMethodSource.SplitLeadingDocComment(customBody);
+            if (docLines.Count > 0)
+                header = string.Join("\n", docLines.Select(l => "    " + l)) + "\n" + header;
+            body = XppMethodSource.IndentBlock(statements, "        ");
         }
         else if (sig.ReturnType == "void")
         {

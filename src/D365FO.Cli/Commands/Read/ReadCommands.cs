@@ -19,7 +19,7 @@ public abstract class ReadBaseCommand<TSettings> : Command<TSettings>
         public string Name { get; init; } = "";
 
         [CommandOption("--method <NAME>")]
-        [System.ComponentModel.Description("If set, return only the source of this method.")]
+        [System.ComponentModel.Description("If set, return only the source of this method. On a form, qualify a datasource, field or control method as Owner.method (e.g. MyGrid_ItemId.lookup).")]
         public string? Method { get; init; }
 
         [CommandOption("--declaration")]
@@ -58,13 +58,23 @@ public abstract class ReadBaseCommand<TSettings> : Command<TSettings>
 
         if (!string.IsNullOrWhiteSpace(settings.Method))
         {
+            var candidates = XppSourceReader.FindMethods(src, settings.Method!);
             var m = XppSourceReader.FindMethod(src, settings.Method!);
             if (m is null)
             {
                 return RenderHelpers.Render(kind,
                     ToolResult<object>.Fail("METHOD_NOT_FOUND",
                         $"Method '{settings.Method}' not found on {objKind} '{settings.Name}'.",
-                        $"Available methods: {string.Join(", ", src.Methods.Select(x => x.Name).Take(20))}"));
+                        $"Available methods: {string.Join(", ", src.Methods.Select(XppSourceReader.QualifiedName).Take(20))}"));
+            }
+            // Several controls or datasources can each override e.g. `lookup`; returning one of them
+            // silently gives the caller a method of the wrong control.
+            if (m.Owner is not null && candidates.Count > 1)
+            {
+                return RenderHelpers.Render(kind,
+                    ToolResult<object>.Fail("AMBIGUOUS_METHOD",
+                        $"'{settings.Method}' is declared by {candidates.Count} owners on {objKind} '{settings.Name}'.",
+                        $"Qualify it as Owner.method: {string.Join(", ", candidates.Select(XppSourceReader.QualifiedName))}"));
             }
 
             var body = m.Body;
@@ -93,7 +103,7 @@ public abstract class ReadBaseCommand<TSettings> : Command<TSettings>
             return RenderHelpers.Render(kind, ToolResult<object>.Success(new
             {
                 kind = objKind, name = settings.Name, path = src.Path,
-                method = m.Name, source = sliced ?? body
+                method = m.Name, owner = m.Owner, source = sliced ?? body
             }));
         }
 

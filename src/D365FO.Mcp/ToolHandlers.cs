@@ -2084,11 +2084,33 @@ public sealed partial class ToolHandlers
                 $"\"{objectName}\" not found in the index.",
                 $"Use search (type=any) for \"{objectName}\" to find the correct name — do not invent one.");
 
+        var owningModel = OwningModel(objectName, objectType);
+        // An object our own model owns is changed in place; extensions are for objects we do not own.
+        var ownedByCustomModel = owningModel is not null && D365FO.Core.Bridge.ObjectModifyEngine.IsCustomModel(owningModel, _repo);
+
         object? methodInfo = null;
         if (!string.IsNullOrEmpty(method))
         {
             var m = _repo.FindMethod(objectName, method!);
-            if (m is null)
+            // Form methods are not in the symbol index; they are read from the form's XML.
+            var formMethod = m is null && objectType == "form" ? FindFormMethod(objectName, method!) : null;
+            if (formMethod is not null)
+            {
+                methodInfo = new
+                {
+                    name = formMethod.Name,
+                    found = true,
+                    owner = formMethod.Owner,
+                    signature = D365FO.Core.Extract.MetadataExtractor.ExtractSignatureLine(formMethod.Body),
+                    eligibility = !ownedByCustomModel
+                        ? "Form method — wrap it with CoC in a form extension class [ExtensionOf(formStr(...))]."
+                        : formMethod.Owner is null
+                            ? $"{objectName} is owned by custom model {owningModel} — replace the method in place: modify method form {objectName} {formMethod.Name}."
+                            : $"{objectName} is owned by custom model {owningModel} — {formMethod.Owner} declares it; replace it with " +
+                              $"generate {(formMethod.Owner.StartsWith("control:", StringComparison.Ordinal) ? "control-method" : "datasource-method")} {objectName} --method {formMethod.Name} --overwrite.",
+                };
+            }
+            else if (m is null)
             {
                 // Kernel fallback: every table inherits its data methods (validateWrite,
                 // insert, modifiedField, …) from xRecord/Common — kernel types with no AOT
@@ -2119,7 +2141,7 @@ public sealed partial class ToolHandlers
                         name = method,
                         found = false,
                         eligibility = $"Method \"{method}\" not found on {objectName} (checked inheritance chain and extensions). " +
-                                      $"Use get_object_info (objectType={(objectType == "table" ? "table" : "class")}) for {objectName} to list real methods.",
+                                      $"List its real methods with `{MethodListCommand(objectType, objectName)}`.",
                     };
             }
             else
@@ -2181,9 +2203,10 @@ public sealed partial class ToolHandlers
             ambiguity = otherKinds.Count > 0
                 ? $"\"{objectName}\" is also a {string.Join(", ", otherKinds)}; resolved as {objectType}. Pass --type (type=...) to choose another."
                 : null,
+            owningModel,
             method = methodInfo,
             existingCocExtensions = coc,
-            recommendedStrategies = StrategiesFor(objectType),
+            recommendedStrategies = ownedByCustomModel ? DirectEditStrategiesFor(objectType, owningModel!) : StrategiesFor(objectType),
             namingValidation = naming,
             similarObjects = similar,
             groundingToken = token,
@@ -2634,6 +2657,66 @@ public sealed partial class ToolHandlers
     /// "check the object type for supported extension mechanisms", and a kind with no extension
     /// form is told so plainly instead of being sent looking for one.
     /// </remarks>
+    /// <summary>
+    /// Strategies for an object the configured custom model owns: it is edited in place, because
+    /// an extension of our own object only splits one change over two objects.
+    /// </summary>
+    internal static IReadOnlyList<string> DirectEditStrategiesFor(string? objectType, string owningModel)
+    {
+        var kind = D365FO.Core.ObjectTypes.ObjectTypeRegistry.NormalizeKind(objectType ?? string.Empty);
+        var strategies = new List<string>
+        {
+            $"Edit directly — the object is owned by custom model {owningModel}; do not create an extension of it",
+        };
+        strategies.AddRange(kind switch
+        {
+            "form" => new[]
+            {
+                "Replace a form method: modify method form <Form> <Method>",
+                "Add or override a control / datasource method: generate control-method | datasource-method <Form> --method <M>",
+                "Structural edits (controls, properties): modify add-control | property",
+            },
+            "class" => new[] { "Replace a method: modify method class <Class> <Method>" },
+            "table" => new[]
+            {
+                "Replace a method: modify method table <Table> <Method>",
+                "Structural edits: modify add-field | add-index | add-relation | add-field-group",
+            },
+            _ => new[] { "Structural edits: d365fo modify --help" },
+        });
+        return strategies;
+    }
+
+    private string? OwningModel(string objectName, string? objectType)
+    {
+        try
+        {
+            return objectType switch
+            {
+                "class" => _repo.GetClassDetails(objectName)?.Class.Model,
+                "table" => _repo.GetTableDetails(objectName)?.Table.Model,
+                "form" => _repo.GetForm(objectName)?.Form.Model,
+                "edt" => _repo.GetEdt(objectName)?.Model,
+                _ => null,
+            };
+        }
+        catch { return null; }
+    }
+
+    private D365FO.Core.Extract.XppSourceReader.SourceBlock? FindFormMethod(string formName, string method)
+    {
+        var path = _repo.GetForm(formName)?.Form.SourcePath;
+        var src = string.IsNullOrEmpty(path) ? null : D365FO.Core.Extract.XppSourceReader.Read(path);
+        return src is null ? null : D365FO.Core.Extract.XppSourceReader.FindMethod(src, method);
+    }
+
+    private static string MethodListCommand(string? objectType, string objectName) => objectType switch
+    {
+        "table" => $"d365fo read table {objectName}",
+        "form" => $"d365fo read form {objectName}",
+        _ => $"d365fo read class {objectName}",
+    };
+
     internal static IReadOnlyList<string> StrategiesFor(string? objectType)
     {
         var kind = D365FO.Core.ObjectTypes.ObjectTypeRegistry.NormalizeKind(objectType ?? string.Empty);

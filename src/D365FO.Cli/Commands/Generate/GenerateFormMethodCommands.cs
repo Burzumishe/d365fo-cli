@@ -61,7 +61,7 @@ public abstract class FormMethodSettings : GenerateSettings
     public string? ReturnType { get; init; }
 
     [CommandOption("--body <XPP>")]
-    [System.ComponentModel.Description("Custom method body (X++ statements). When omitted a super()-returning stub is generated.")]
+    [System.ComponentModel.Description("Custom method body (X++ statements, re-indented to the method's level). Leading /// lines become the doc comment above the signature. When omitted a super()-returning stub is generated.")]
     public string? Body { get; init; }
 
     [CommandOption("--list")]

@@ -41,8 +41,8 @@ properties as high-risk unless the user explicitly requested that removal.
 **Hand-written X++ never reaches a file unvalidated:**
 
 ```sh
-d365fo validate references --file <f> --output json   # every identifier proven against the index; exit 2 = hallucinated symbols
-d365fo validate xpp --file <f> --output json          # offline BP rules (today(), CoC defaults, labels, …); exit 2 = errors
+d365fo validate references <f> --output json   # every identifier proven against the index; exit 2 = hallucinated symbols
+d365fo validate xpp <f> --output json          # offline BP rules (today(), CoC defaults, labels, …); exit 2 = errors
 ```
 
 Fix all errors, re-run, only then write. Both gates run in <200 ms with no VM.
@@ -51,7 +51,7 @@ Fix all errors, re-run, only then write. Both gates run in <200 ms with no VM.
 
 ```sh
 # Parse with an XML validator first. Then:
-d365fo validate xpp --file <f> --code-type xml-any --output json
+d365fo validate xpp <f> --code-type xml-any --output json
 d365fo index refresh --model <Model>
 d365fo get form <Form> --output json      # for AxForm/AxFormExtension changes
 d365fo get table <Table> --output json    # for AxTable/AxTableExtension changes

@@ -116,6 +116,32 @@ public class MethodSourceFtsTests : IDisposable
         Assert.Contains("strFmt", line.Text);
     }
 
+    /// <summary>
+    /// X++ never contains the text "FmVehicle.VIN" — the field is read as <c>v.VIN</c>. Searching
+    /// for the literal dotted needle scanned the whole corpus and reported a complete-looking zero.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Find_owner_member_matches_member_access_and_says_it_is_not_scoped(bool indexSource)
+    {
+        Ingest(indexSource);
+
+        var result = MethodSourceSearch.Find(_repo, "FmVehicle.VIN", kind: null, model: null, limit: 50);
+
+        var hit = Assert.Single(result.Hits, h => h.Name == "FmVehicleService" && h.Method == "run");
+        Assert.Contains(hit.Matches, m => m.Text.Contains("v.VIN"));
+        Assert.Contains("ANY type", result.Caveat);
+    }
+
+    [Theory]
+    [InlineData("FmVehicle.VIN", "VIN")]
+    [InlineData("FmVehicle", null)]
+    [InlineData("@Fleet:Found", null)]
+    [InlineData("/Classes/FmVehicleService/Methods/run", null)]
+    public void QualifiedMember_splits_only_owner_member_needles(string needle, string? expected)
+        => Assert.Equal(expected, MethodSourceSearch.QualifiedMember(needle));
+
     [Fact]
     public void Find_falls_back_to_disk_scan_when_not_indexed()
     {

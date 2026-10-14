@@ -184,7 +184,7 @@ internal static class TableParts
     private static readonly string[] ClassificationKeys = ["GeneralDataProtectionRegulation", "AssetClassification"];
 
     // What a method's declaration already says, once it is in Signature.
-    private static readonly string[] MethodKeysInSignature =
+    internal static readonly string[] MethodKeysInSignature =
         ["Visibility", "IsAbstract", "IsDelegate", "IsStatic", "IsFinal", "IsDisplay", "IsEdit", "ReturnType", "Parameters"];
 
     public static void ShapeBridged(System.Text.Json.Nodes.JsonObject table, HashSet<string>? include, bool withSource, bool compact)
@@ -260,7 +260,7 @@ internal static class TableParts
         return System.Text.RegularExpressions.Regex.Replace(string.Join(" ", lines), @"\s+", " ").Trim();
     }
 
-    private static void DropEmpty(System.Text.Json.Nodes.JsonNode? node)
+    internal static void DropEmpty(System.Text.Json.Nodes.JsonNode? node)
     {
         switch (node)
         {
@@ -286,6 +286,72 @@ internal static class TableParts
         System.Text.Json.Nodes.JsonObject o => o.Count == 0,
         _ => false,
     };
+}
+
+/// <summary>
+/// Shapes a `get form` payload. The bridge hands back the full AxForm with every method body —
+/// form, datasource, datasource-field and control methods, nested at any depth — plus the
+/// compiler's metadata: 64k characters for an ordinary custom form. Method bodies are reduced to
+/// their declarations unless `--with-source`.
+/// </summary>
+internal static class FormParts
+{
+    // Whole-object source blobs and compiler output: `read form` serves the source when needed.
+    private static readonly string[] SourceKeys = ["SourceCode", "UnparsableSource"];
+    private static readonly string[] CompilerKeys = ["CompilerMetadata"];
+
+    public static void ShapeBridged(System.Text.Json.Nodes.JsonObject form, bool withSource, bool compact)
+    {
+        if (!withSource)
+            foreach (var key in SourceKeys) form.Remove(key);
+        if (compact)
+            foreach (var key in CompilerKeys) form.Remove(key);
+
+        ShapeMethods(form, withSource, compact);
+        if (compact)
+        {
+            if (form["DataSources"] is System.Text.Json.Nodes.JsonArray dataSources)
+                foreach (var ds in dataSources.OfType<System.Text.Json.Nodes.JsonObject>())
+                    if (ds["Fields"] is System.Text.Json.Nodes.JsonArray fields)
+                        foreach (var field in fields.OfType<System.Text.Json.Nodes.JsonObject>()) DropFieldDefaults(field);
+            TableParts.DropEmpty(form);
+        }
+    }
+
+    // A datasource field the form does not customise carries exactly these values; listing them
+    // on every field of every datasource was a third of the compact payload.
+    private static readonly Dictionary<string, string> FieldDefaults = new(StringComparer.Ordinal)
+    {
+        ["AllowEdit"] = "Yes", ["Enabled"] = "Yes", ["Skip"] = "No", ["Visible"] = "Yes",
+        ["AllowAdd"] = "Restricted", ["Mandatory"] = "No",
+    };
+
+    private static void DropFieldDefaults(System.Text.Json.Nodes.JsonObject field)
+    {
+        foreach (var (key, value) in FieldDefaults)
+            if ((string?)field[key] == value) field.Remove(key);
+        if ((string?)field["Name"] is { } name && name == (string?)field["DataField"]) field.Remove("Name");
+    }
+
+    private static void ShapeMethods(System.Text.Json.Nodes.JsonNode? node, bool withSource, bool compact)
+    {
+        switch (node)
+        {
+            case System.Text.Json.Nodes.JsonObject o:
+                // a method object: Name + Source
+                if (o["Source"] is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var src) && o["Name"] is not null)
+                {
+                    o["Signature"] = TableParts.Declaration(src);
+                    if (!withSource) o.Remove("Source");
+                    if (compact) foreach (var k in TableParts.MethodKeysInSignature) o.Remove(k);
+                }
+                foreach (var (_, child) in o.ToList()) ShapeMethods(child, withSource, compact);
+                break;
+            case System.Text.Json.Nodes.JsonArray a:
+                foreach (var child in a) ShapeMethods(child, withSource, compact);
+                break;
+        }
+    }
 }
 
 public sealed class GetEdtCommand : Command<GetEdtCommand.Settings>
@@ -514,6 +580,14 @@ public sealed class GetFormCommand : Command<GetFormCommand.Settings>
     {
         [CommandArgument(0, "<NAME>")]
         public string Name { get; init; } = "";
+
+        [CommandOption("--with-source")]
+        [System.ComponentModel.Description("Return full X++ method bodies (form, datasource, field and control methods). Default: each method carries its declaration only.")]
+        public bool WithSource { get; init; }
+
+        [CommandOption("--full")]
+        [System.ComponentModel.Description("Bridge output only: keep compiler metadata, unparsable source and empty properties. Default: compact.")]
+        public bool Full { get; init; }
     }
 
     public override int Execute(CommandContext ctx, Settings settings)
@@ -524,6 +598,8 @@ public sealed class GetFormCommand : Command<GetFormCommand.Settings>
             var bridged = BridgeGate.TryReadForm(settings.Name);
             if (bridged is not null)
             {
+                if (bridged is System.Text.Json.Nodes.JsonObject obj)
+                    FormParts.ShapeBridged(obj, settings.WithSource, compact: !settings.Full);
                 return RenderHelpers.Render(kind, ToolResult<object>.Success(bridged));
             }
         }

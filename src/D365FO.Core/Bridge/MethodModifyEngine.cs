@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using D365FO.Core.Guardrails;
 using D365FO.Core.Index;
+using D365FO.Core.Scaffolding;
 using D365FO.Core.Validation;
 using D365FO.Core.Bridge;
 
@@ -187,23 +188,38 @@ public static class MethodModifyEngine
                     : $"{request.ObjectName} declares no methods. Use `d365fo generate` commands to scaffold a new object instead.");
         }
 
-        var oldBody = Local(existing, "Source") ?? string.Empty;
+        var oldSource = Local(existing, "Source") ?? string.Empty;
 
-        // ---- 4. Grounding + fail-closed validation gate ----
+        // ---- 4. Compose the new method source ----
+        // The stored source is the whole method. --body is either the statements (the signature,
+        // doc comment and braces of the existing method are kept) or a complete method, which
+        // replaces the signature and doc comment too.
+        var bodyIsFullMethod = XppMethodSource.IsFullMethod(request.NewBody, request.MethodName);
+        var newSource = bodyIsFullMethod
+            ? request.NewBody
+            : XppMethodSource.ReplaceStatements(oldSource, request.MethodName, request.NewBody);
+        if (newSource is null)
+        {
+            return ToolResult<object>.Fail(D365FoErrorCodes.BadInput,
+                $"Could not locate the signature of '{request.MethodName}' in its current source, so the new statements cannot be placed inside it.",
+                "Pass the complete method (signature and braces) as --body instead of statements only.");
+        }
+
+        // ---- 5. Grounding + fail-closed validation gate (on the method as it will be stored) ----
         var warnings = new List<string>();
-        var (grounding, gateFailure) = CheckGrounding(request, repo, warnings);
+        var (grounding, gateFailure) = CheckGrounding(request, newSource, repo, warnings);
         if (gateFailure is not null) return gateFailure;
 
-        // ---- 5. Structured replace: only the <Source> CDATA of the matched <Method> ----
+        // ---- 6. Structured replace: only the <Source> CDATA of the matched <Method> ----
         var srcEl = existing.Elements().FirstOrDefault(e => e.Name.LocalName == "Source");
         if (srcEl is null)
         {
             srcEl = new XElement(existing.Name.Namespace + "Source");
             existing.Add(srcEl);
         }
-        srcEl.ReplaceAll(new XCData(request.NewBody));
+        srcEl.ReplaceAll(new XCData(newSource));
 
-        // ---- 6. Write back via the bridge (IMetadataProvider, never disk) ----
+        // ---- 7. Write back via the bridge (IMetadataProvider, never disk) ----
         var newXml = doc.ToString(SaveOptions.DisableFormatting);
 
         // Journal the exact pre-image before the write. This path used to read the live
@@ -246,6 +262,8 @@ public static class MethodModifyEngine
         // surface a warning instead of re-entrantly invoking the index pipeline.
         warnings.Add($"Index not auto-refreshed — run `d365fo index refresh --model {model}` so '{request.MethodName}' is searchable.");
 
+        // The caller already has the new body and can read the old one; echoing both sources cost
+        // 5-8k characters per write. Line counts are enough to confirm the write landed.
         return ToolResult<object>.Success(new
         {
             kind,
@@ -253,11 +271,14 @@ public static class MethodModifyEngine
             method = request.MethodName,
             model,
             source = "bridge",
-            oldBody,
-            newBody = request.NewBody,
+            bodyInput = bodyIsFullMethod ? "full-method" : "statements",
+            linesBefore = LineCount(oldSource),
+            linesAfter = LineCount(newSource),
             grounding,
         }, warnings);
     }
+
+    private static int LineCount(string source) => source.Trim('\n', '\r').Split('\n').Length;
 
     /// <summary>
     /// Grounding token (opt-in enforcement, same convention as
@@ -267,7 +288,7 @@ public static class MethodModifyEngine
     /// since this mutates a live, already-shipped object rather than a scaffold file.
     /// </summary>
     private static (object Grounding, ToolResult<object>? Failure) CheckGrounding(
-        ModifyRequest request, MetadataRepository? repo, List<string> warnings)
+        ModifyRequest request, string newSource, MetadataRepository? repo, List<string> warnings)
     {
         int refErrors = 0, refWarnings = 0, bpErrors = 0, bpWarnings = 0, verified = 0;
         var violationDetails = new List<string>();
@@ -276,7 +297,7 @@ public static class MethodModifyEngine
         {
             try
             {
-                var resolved = ReferenceResolver.Resolve(request.NewBody, repo);
+                var resolved = ReferenceResolver.Resolve(newSource, repo);
                 verified = resolved.VerifiedCount;
                 foreach (var v in resolved.Violations)
                 {
@@ -285,7 +306,7 @@ public static class MethodModifyEngine
                 }
 
                 var stats = repo.HasPropertyStats() ? repo : (IPropertyStatsProvider?)null;
-                foreach (var v in XppValidator.Validate(request.NewBody, XppValidator.CodeTypeXpp, stats))
+                foreach (var v in XppValidator.Validate(newSource, XppValidator.CodeTypeXpp, stats))
                 {
                     if (v.Severity == "error") bpErrors++; else bpWarnings++;
                     violationDetails.Add($"[{v.Rule}] line {v.Line}: {v.Excerpt} — {v.Fix}");

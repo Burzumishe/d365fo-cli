@@ -68,7 +68,7 @@ Rebuild first (`d365fo build` without `--incremental`, on the VM) and re-read.
 | `Exception::CLRError` | a .NET call threw | catch `CLRError` specifically; read `CLRInterop::getLastException()` |
 | "number sequence … not set up" | reference not registered for this company | check `loadModule()`, then Organization administration → Number sequences |
 | "field does not exist" | invented or renamed field | `d365fo get table <Name>`; reference through `fieldNum()` |
-| "unknown type", "could not be found" | invented identifier | `d365fo validate references --file <f>` — it proves every symbol before the compiler sees it |
+| "unknown type", "could not be found" | invented identifier | `d365fo validate references <f>` — it proves every symbol before the compiler sees it |
 | "label … does not exist" | missing label id | `d365fo search label "<text>"`, then `d365fo label create` |
 | `';' expected` and friends | syntax | check the reported line — usually a CDATA method body edit |
 | `MSB4062`, `MSB4019`, `MSB1003`/`MSB1009` | the build never reached the compiler | see "is it your code at all?" above |
@@ -83,8 +83,8 @@ alongside the hint, so the next step is always
 Most of the table above is reachable **before** a build, in milliseconds:
 
 ```sh
-d365fo validate references --file MyClass.xpp --output json   # invented symbols
-d365fo validate xpp        --file MyClass.xpp --output json   # BP rules, offline
+d365fo validate references MyClass.xpp --output json   # invented symbols
+d365fo validate xpp        MyClass.xpp --output json   # BP rules, offline
 d365fo validate metadata   MyMenu.xml         --output json   # will the provider read it?
 ```
 

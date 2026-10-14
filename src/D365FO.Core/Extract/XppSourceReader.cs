@@ -15,7 +15,13 @@ namespace D365FO.Core.Extract;
 /// </summary>
 public static class XppSourceReader
 {
-    public sealed record SourceBlock(string Kind, string Name, string Body);
+    /// <summary>One method's source.</summary>
+    /// <param name="Owner">
+    /// Where the method is declared inside a form: <c>datasource:Name</c>,
+    /// <c>datasource:Name.field:Field</c> or <c>control:Name</c>. Null for object-level methods
+    /// (every class and table method, and a form's own methods).
+    /// </param>
+    public sealed record SourceBlock(string Kind, string Name, string Body, string? Owner = null);
     public sealed record SourceResult(string Path, string? Declaration, IReadOnlyList<SourceBlock> Methods);
 
     public static SourceResult? Read(string xmlPath)
@@ -35,14 +41,69 @@ public static class XppSourceReader
             var name = FindDescendantLocal(m, "Name")?.Value?.Trim() ?? "";
             var src = FindDescendantLocal(m, "Source")?.Value;
             if (string.IsNullOrEmpty(name) || src is null) continue;
-            methods.Add(new SourceBlock("Method", name, src));
+            methods.Add(new SourceBlock("Method", name, src, OwnerOf(m)));
         }
 
         return new SourceResult(xmlPath, declaration, methods);
     }
 
+    /// <summary>
+    /// Find a method by name. An object-level method wins over a same-named datasource or
+    /// control method; <c>Owner.method</c> (e.g. <c>MyGrid_ItemId.lookup</c>) picks the method of
+    /// that datasource, field or control. Use <see cref="FindMethods"/> to detect ambiguity.
+    /// </summary>
     public static SourceBlock? FindMethod(SourceResult src, string methodName)
-        => src.Methods.FirstOrDefault(m => string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase));
+    {
+        var matches = FindMethods(src, methodName);
+        return matches.FirstOrDefault(m => m.Owner is null) ?? matches.FirstOrDefault();
+    }
+
+    /// <summary>Every method called <paramref name="methodName"/> (optionally <c>Owner.method</c>).</summary>
+    public static IReadOnlyList<SourceBlock> FindMethods(SourceResult src, string methodName)
+    {
+        var dot = methodName.LastIndexOf('.');
+        if (dot > 0 && dot < methodName.Length - 1)
+        {
+            var owner = methodName[..dot];
+            var name = methodName[(dot + 1)..];
+            return src.Methods
+                .Where(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)
+                            && m.Owner is not null && OwnerNameMatches(m.Owner, owner))
+                .ToList();
+        }
+        return src.Methods.Where(m => string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>The name to qualify a method with: <c>Owner.method</c>, or just the method name.</summary>
+    public static string QualifiedName(SourceBlock m)
+        => m.Owner is null ? m.Name : OwnerName(m.Owner) + "." + m.Name;
+
+    private static string? OwnerOf(XElement method)
+    {
+        string? control = null, dataSource = null, field = null;
+        foreach (var ancestor in method.Ancestors())
+        {
+            var local = ancestor.Name.LocalName;
+            var name = ancestor.Elements().FirstOrDefault(e => e.Name.LocalName == "Name")?.Value?.Trim();
+            if (local == "Control" && control is null) control = name;
+            else if (local == "DataSource" && dataSource is null) dataSource = name;
+            else if (local == "DataField" && field is null) field = name;
+        }
+        if (control is not null) return "control:" + control;
+        if (dataSource is not null) return field is null ? "datasource:" + dataSource : $"datasource:{dataSource}.field:{field}";
+        return null;
+    }
+
+    // "datasource:Ds.field:F" → "F", "datasource:Ds" → "Ds", "control:C" → "C"
+    private static string OwnerName(string owner)
+    {
+        var last = owner.Split('.').Last();
+        return last[(last.IndexOf(':') + 1)..];
+    }
+
+    private static bool OwnerNameMatches(string owner, string requested)
+        => string.Equals(OwnerName(owner), requested, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(owner, requested, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Return a contiguous slice of <paramref name="body"/> by 1-based line

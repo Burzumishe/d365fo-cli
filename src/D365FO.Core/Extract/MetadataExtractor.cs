@@ -962,7 +962,7 @@ public sealed class MetadataExtractor
     /// <c>get table</c> present it as the exact declaration a CoC wrapper has to match, which is
     /// the one thing a green build cannot correct.
     /// </remarks>
-    private static string ExtractSignatureLine(string source)
+    public static string ExtractSignatureLine(string source)
     {
         // Find the first non-empty, non-attribute, non-comment line — that's the
         // actual method signature. Attribute lines start with '[' and may span
